@@ -151,8 +151,8 @@ component Clip inherits Rectangle {
         return 16 + entry * 4 + part;
     }
     /// How tall one effect bar is, and the grip at either end of it.
-    property <length> span-h: 8px;
-    property <length> span-grip: 5px;
+    property <length> span-h: 14px;
+    property <length> span-grip: 8px;
 
     property <color> mark: Paint.mark(root.item.kind);
     property <color> well: Paint.well(root.item.kind);
@@ -600,9 +600,27 @@ component Clip inherits Rectangle {
             height: parent.height;
             text: span.name;
             color: Theme.on-accent;
-            font-size: 7px;
+            font-size: 9px;
             vertical-alignment: center;
             overflow: elide;
+        }
+
+        // A grip line at either end, so the ends read as handles.
+        Rectangle {
+            x: 3px;
+            y: 3px;
+            width: 2px;
+            height: parent.height - 6px;
+            border-radius: 1px;
+            background: Theme.on-accent.with-alpha(0.45);
+        }
+        Rectangle {
+            x: parent.width - 5px;
+            y: 3px;
+            width: 2px;
+            height: parent.height - 6px;
+            border-radius: 1px;
+            background: Theme.on-accent.with-alpha(0.45);
         }
 
         body-touch := TouchArea {
