@@ -1435,7 +1435,10 @@ fn pressed_selection(held: &[String], id: &str, additive: bool, edge: i32) -> Ve
         vec![id.to_owned()]
     } else if additive {
         if already {
-            held.iter().filter(|clip| clip.as_str() != id).cloned().collect()
+            held.iter()
+                .filter(|clip| clip.as_str() != id)
+                .cloned()
+                .collect()
         } else {
             let mut next = held.to_vec();
             next.push(id.to_owned());
@@ -3596,7 +3599,8 @@ impl Studio {
     }
 
     /// Link `index`'s span from typed times, in seconds into the clip:
-    /// inside it, and at least a frame long.
+    /// inside it, and at least a frame long. On the echo; `clip_commit`
+    /// makes it real.
     pub fn chain_span_set(&mut self, index: i32, from: f32, to: f32) {
         let Some(clip) = self.sole_selection().and_then(|id| self.clip(&id).cloned()) else {
             return;
@@ -3608,16 +3612,16 @@ impl Studio {
             from: clip.source_at(from),
             to: clip.source_at(to),
         };
-        self.chain_edit(false, |chain| {
-            let Some(link) = usize::try_from(index).ok().and_then(|i| chain.get_mut(i)) else {
-                return false;
-            };
-            if link.span == Some(span) {
-                return false;
-            }
+        // On the echo, as every knob of the card is: a scrub is many
+        // values and one step, made real by `clip_commit`.
+        self.begin_echo();
+        if let Some(link) = self.echo_clip_mut(&clip.id).and_then(|clip| {
+            usize::try_from(index)
+                .ok()
+                .and_then(|i| clip.video_effects.get_mut(i))
+        }) {
             link.span = Some(span);
-            true
-        });
+        }
     }
 
     pub fn chain_move(&mut self, audio: bool, index: i32, delta: i32) {
@@ -9634,18 +9638,20 @@ impl Studio {
 #[cfg(test)]
 mod tests {
     use super::{
-        Command, Footprint, Studio, adjust_key_names, chain_colours, chain_rows, custom_frame,
-        custom_rate, fps_of, grading_rows, home_folder, key_commands, link_key_names, link_param,
-        SPAN_EDGE, link_param_name, packed, param_link, place_in, shown, span_fresh,
-        span_offsets_dragged,
-        span_rows, wheel_partners, write_keyable, write_link_param,
+        Command, Footprint, SPAN_EDGE, Studio, adjust_key_names, chain_colours, chain_rows,
+        custom_frame, custom_rate, fps_of, grading_rows, home_folder, key_commands, link_key_names,
+        link_param, link_param_name, packed, param_link, place_in, shown, span_fresh,
+        span_offsets_dragged, span_rows, wheel_partners, write_keyable, write_link_param,
     };
 
     #[test]
     fn a_press_on_a_span_bar_selects_its_clip_alone() {
         let held = ["a".to_owned(), "b".to_owned()];
         // A bar belongs to one clip: grabbing it never carries the rest.
-        assert_eq!(super::pressed_selection(&held, "b", false, SPAN_EDGE + 2), ["b"]);
+        assert_eq!(
+            super::pressed_selection(&held, "b", false, SPAN_EDGE + 2),
+            ["b"]
+        );
         assert_eq!(super::pressed_selection(&held, "b", true, SPAN_EDGE), ["b"]);
         // The clip itself still carries the set, and a shift-press toggles.
         assert_eq!(super::pressed_selection(&held, "b", false, -1), ["a", "b"]);
@@ -9709,11 +9715,23 @@ mod tests {
         let min = 1.0 / 30.0;
         // Anything within a fifth of a second of 3 s lands on it.
         let snap = |x: f64| if (x - 3.0).abs() < 0.2 { 3.0 } else { x };
-        assert_eq!(span_offsets_dragged(0, 2.0, 5.0, 0.9, 10.0, min, snap), (3.0, 5.0));
-        assert_eq!(span_offsets_dragged(1, 1.0, 2.0, 1.1, 10.0, min, snap), (1.0, 3.0));
+        assert_eq!(
+            span_offsets_dragged(0, 2.0, 5.0, 0.9, 10.0, min, snap),
+            (3.0, 5.0)
+        );
+        assert_eq!(
+            span_offsets_dragged(1, 1.0, 2.0, 1.1, 10.0, min, snap),
+            (1.0, 3.0)
+        );
         // The body snaps by whichever end comes near, and keeps its length.
-        assert_eq!(span_offsets_dragged(2, 0.0, 1.0, 1.9, 10.0, min, snap), (2.0, 3.0));
-        assert_eq!(span_offsets_dragged(2, 0.0, 1.0, 2.9, 10.0, min, snap), (3.0, 4.0));
+        assert_eq!(
+            span_offsets_dragged(2, 0.0, 1.0, 1.9, 10.0, min, snap),
+            (2.0, 3.0)
+        );
+        assert_eq!(
+            span_offsets_dragged(2, 0.0, 1.0, 2.9, 10.0, min, snap),
+            (3.0, 4.0)
+        );
     }
 
     #[test]

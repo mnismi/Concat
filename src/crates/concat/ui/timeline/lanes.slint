@@ -580,10 +580,13 @@ component Clip inherits Rectangle {
     //
     // A bar each along the foot, over `touch` so a press on one moves the
     // bar and not the clip. Its ends resize it, its middle slides it.
+    // Never past the clip: a short span near its tail is widened into
+    // it, not onto the next clip, whose presses it would otherwise take.
     for span in root.item.spans: Rectangle {
-        x: span.from * root.px-per-second;
+        width: Math.min(root.width,
+            Math.max(2 * root.span-grip + 2px, span.length * root.px-per-second));
+        x: Math.max(0px, Math.min(span.from * root.px-per-second, root.width - self.width));
         y: root.height - (span.row + 1) * (root.span-h + 1px) - 1px;
-        width: Math.max(2 * root.span-grip + 2px, span.length * root.px-per-second);
         height: root.span-h;
         border-radius: 2px;
         background: body-touch.pressed || head-touch.pressed || tail-touch.pressed

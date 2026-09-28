@@ -424,7 +424,7 @@ export component PresetStack inherits VerticalLayout {
                             default-value: 0;
                             fmt: ParamFormat.seconds2;
                             enabled: item.on;
-                            changed(v) => { root.span-set(index, v, item.span-to); }
+                            changed(v) => { root.span-set(index, v, item.span-to); root.commit(); }
                         }
 
                         if root.spans && item.spanned: Param {
@@ -436,7 +436,7 @@ export component PresetStack inherits VerticalLayout {
                             default-value: item.span-max;
                             fmt: ParamFormat.seconds2;
                             enabled: item.on;
-                            changed(v) => { root.span-set(index, item.span-from, v); }
+                            changed(v) => { root.span-set(index, item.span-from, v); root.commit(); }
                         }
 
                         // One control per parameter the package declares. The
