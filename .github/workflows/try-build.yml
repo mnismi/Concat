@@ -1,0 +1,14 @@
+# A build of this branch on push, for trying it before it is merged: the
+# same Build app workflow a release runs, without publishing anything.
+# Download the Concat-windows-x86_64 artifact from the run's summary.
+# Not for upstream - drop this file before opening a pull request.
+name: Try build
+
+on:
+  push:
+    branches: [feat/effect-keyframes-and-layers]
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-app.yml
