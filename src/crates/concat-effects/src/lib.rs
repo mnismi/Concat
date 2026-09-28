@@ -80,6 +80,7 @@ mod tests {
                 .collect(),
             enabled: true,
             keys: Default::default(),
+            span: None,
         }
     }
 

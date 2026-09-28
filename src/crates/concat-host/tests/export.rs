@@ -638,6 +638,7 @@ fn effect(id: &str) -> AppliedFilter {
         params: Default::default(),
         enabled: true,
         keys: Default::default(),
+        span: None,
     }
 }
 

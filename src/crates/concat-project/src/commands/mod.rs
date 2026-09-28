@@ -855,6 +855,7 @@ impl Command {
                         .values()
                         .flatten()
                         .any(|key| bad([key.at, key.value]) || bad(key.ease.0))
+                    || entry.span.is_some_and(|span| bad([span.from, span.to]))
             })
         }
         match self {

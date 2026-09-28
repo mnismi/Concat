@@ -1761,6 +1761,114 @@ mod tests {
         assert!((ninety.at * tail.duration - 4.0).abs() < 1e-9);
     }
 
+    fn spanned(from: f64, to: f64) -> crate::model::AppliedFilter {
+        let mut link = crate::model::AppliedFilter::new("concat.vignette");
+        link.span = Some(crate::model::Span { from, to });
+        link
+    }
+
+    #[test]
+    fn a_span_round_trips_and_an_old_link_has_none() {
+        let link = spanned(2.0, 4.0);
+        let json = serde_json::to_string(&link).unwrap();
+        assert!(json.contains("\"span\":{\"from\":2.0,\"to\":4.0}"), "{json}");
+        let old: crate::model::AppliedFilter =
+            serde_json::from_str(r#"{"id":"concat.vignette"}"#).unwrap();
+        assert_eq!(old.span, None);
+        assert!(!serde_json::to_string(&old).unwrap().contains("span"));
+    }
+
+    #[test]
+    fn a_span_is_live_on_its_source_seconds_only() {
+        let link = spanned(2.0, 4.0);
+        assert!(!link.live_at(1.99));
+        assert!(link.live_at(2.0) && link.live_at(3.9));
+        assert!(!link.live_at(4.0));
+        assert!(crate::model::AppliedFilter::new("x").live_at(123.0));
+    }
+
+    #[test]
+    fn an_inverted_span_is_tidied_away_and_a_non_finite_one_refused() {
+        let (mut editor, _, clip_id) = fixture();
+        editor
+            .apply(Command::UpdateClip {
+                clip_id: clip_id.clone(),
+                patch: ClipPatch {
+                    video_effects: Some(vec![spanned(4.0, 2.0)]),
+                    ..Default::default()
+                },
+            })
+            .expect("applies");
+        assert_eq!(
+            editor.project().active().clips[0].video_effects[0].span,
+            None
+        );
+        let refused = editor.apply(Command::UpdateClip {
+            clip_id,
+            patch: ClipPatch {
+                video_effects: Some(vec![spanned(f64::NAN, 2.0)]),
+                ..Default::default()
+            },
+        });
+        assert!(refused.is_err());
+    }
+
+    #[test]
+    fn a_span_stays_on_the_footage_through_trim_and_split() {
+        use crate::model::Span;
+        let (mut editor, _, clip_id) = fixture();
+        editor
+            .apply(Command::UpdateClip {
+                clip_id: clip_id.clone(),
+                patch: ClipPatch {
+                    video_effects: Some(vec![spanned(3.0, 6.0)]),
+                    ..Default::default()
+                },
+            })
+            .expect("applies");
+        editor
+            .apply(Command::TrimClip {
+                clip_id: clip_id.clone(),
+                edge: TrimEdge::Start,
+                delta: 5.0,
+                ripple: false,
+            })
+            .expect("trims");
+        let clip = &editor.project().active().clips[0];
+        assert_eq!(clip.video_effects[0].span, Some(Span { from: 3.0, to: 6.0 }));
+        // Trimmed past the head of the span: 5..6 s of it still plays.
+        assert!((clip.offset_of(6.0) - 1.0).abs() < 1e-9);
+        let (id, start) = (clip.id.clone(), clip.start);
+        editor
+            .apply(Command::SplitClips {
+                clip_ids: vec![id],
+                time: start + 0.5,
+            })
+            .expect("splits");
+        for piece in &editor.project().active().clips {
+            assert_eq!(piece.video_effects[0].span, Some(Span { from: 3.0, to: 6.0 }));
+        }
+    }
+
+    #[test]
+    fn source_time_follows_the_clip_speed() {
+        use crate::model::SpeedPoint;
+        let (editor, _, _) = fixture();
+        let mut clip = (*editor.project().active().clips[0]).clone();
+        clip.source_start = 1.0;
+        clip.speed = 2.0;
+        assert!((clip.source_at(1.5) - 4.0).abs() < 1e-9);
+        assert!((clip.offset_of(4.0) - 1.5).abs() < 1e-9);
+        clip.speed_curve = Some(vec![
+            SpeedPoint { at: 0.0, speed: 1.0 },
+            SpeedPoint { at: 1.0, speed: 3.0 },
+        ]);
+        for offset in [0.0, 0.7, 2.0] {
+            let back = clip.offset_of(clip.source_at(offset));
+            assert!((back - offset).abs() < 1e-6, "{offset} -> {back}");
+        }
+    }
+
     #[test]
     fn rearranged_pieces_refuse_to_merge() {
         let (mut editor, _, clip_id) = fixture();
