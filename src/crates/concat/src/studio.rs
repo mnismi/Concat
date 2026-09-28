@@ -387,6 +387,16 @@ pub enum Gesture {
         clip: String,
         original_duration: f32,
     },
+    /// Dragging one effect's span bar on a clip: its head, tail or body.
+    /// Offsets are timeline seconds into the clip, as they were at the
+    /// press; see `SPAN_EDGE`.
+    EffectSpan {
+        clip: String,
+        entry: usize,
+        part: i32,
+        from: f64,
+        to: f64,
+    },
     /// A drag on the stage: every selected picture under the playhead slides
     /// with the pointer, from where each one was when the press landed.
     StageMove {
@@ -1406,6 +1416,73 @@ fn chain_colours(chain: &[AppliedFilter]) -> Vec<ColourKnobData> {
                 })
         })
         .collect()
+}
+
+/// Edge codes from here up are an effect's span bar, not the clip:
+/// `SPAN_EDGE + entry * 4 + part`, part 0 its head, 1 its tail, 2 its body.
+/// Carried on the clip's own press so the bar needs no wiring of its own
+/// through every pane that hosts the lanes. Mirrored in lanes.slint.
+pub const SPAN_EDGE: i32 = 16;
+
+/// A span's new place, in seconds into the clip, after its `part` moved by
+/// `delta`: inside the clip, and never shorter than `min`.
+fn span_offsets_dragged(
+    part: i32,
+    from: f64,
+    to: f64,
+    delta: f64,
+    duration: f64,
+    min: f64,
+) -> (f64, f64) {
+    match part {
+        0 => ((from + delta).clamp(0.0, (to - min).max(0.0)), to),
+        1 => (from, (to + delta).clamp((from + min).min(duration), duration)),
+        _ => {
+            let length = to - from;
+            let from = (from + delta).clamp(0.0, (duration - length).max(0.0));
+            (from, from + length)
+        }
+    }
+}
+
+/// The bars the lanes draw along a clip's foot: one per live spanned
+/// effect, in seconds into the clip, clipped to it, stacked so two that
+/// overlap sit on rows of their own. A span trimmed wholly away draws none.
+fn span_rows(clip: &Clip) -> Vec<EffectSpanData> {
+    let catalogue = Catalogue::builtin();
+    let mut rows: Vec<EffectSpanData> = Vec::new();
+    for (entry, link) in clip.video_effects.iter().enumerate() {
+        let Some(span) = link.span.filter(|_| link.enabled) else {
+            continue;
+        };
+        let from = clip.offset_of(span.from).max(0.0);
+        let to = clip.offset_of(span.to).min(clip.duration);
+        if to - from <= 1e-6 {
+            continue;
+        }
+        let row = (0..)
+            .find(|row| {
+                !rows.iter().any(|other| {
+                    other.row == *row
+                        && f64::from(other.from) < to
+                        && from < f64::from(other.from + other.length)
+                })
+            })
+            .unwrap_or(0);
+        let name = catalogue
+            .packages()
+            .find(|package| package.answers_to(&link.id))
+            .map(|package| package.manifest.effect.name.clone())
+            .unwrap_or_else(|| label_of(&link.id));
+        rows.push(EffectSpanData {
+            entry: entry as i32,
+            name: name.into(),
+            from: from as f32,
+            length: (to - from) as f32,
+            row,
+        });
+    }
+    rows
 }
 
 /// A chain as the inspector's stack draws it: one row per link, and one per
@@ -3778,6 +3855,20 @@ impl Studio {
         };
 
         self.begin_echo();
+        if edge >= SPAN_EDGE && self.selection.len() <= 1 {
+            let entry = ((edge - SPAN_EDGE) / 4) as usize;
+            let part = (edge - SPAN_EDGE) % 4;
+            if let Some(span) = clip.video_effects.get(entry).and_then(|link| link.span) {
+                self.gesture = Gesture::EffectSpan {
+                    clip: id.to_owned(),
+                    entry,
+                    part,
+                    from: clip.offset_of(span.from).max(0.0),
+                    to: clip.offset_of(span.to).min(clip.duration),
+                };
+            }
+            return;
+        }
         if edge == 2 && self.selection.len() <= 1 {
             if let Some(transition) = clip.transition_in.as_ref() {
                 self.gesture = Gesture::TransitionResize {
@@ -3938,6 +4029,36 @@ impl Studio {
                     }
                 }
             }
+            Gesture::EffectSpan {
+                clip,
+                entry,
+                part,
+                from,
+                to,
+            } => {
+                let (id, entry) = (clip.clone(), *entry);
+                let min = 1.0 / f64::from(self.frame_rate().max(1.0));
+                if let Some(base) = self.clip(&id).cloned() {
+                    let (from, to) = span_offsets_dragged(
+                        *part,
+                        *from,
+                        *to,
+                        f64::from(seconds),
+                        base.duration,
+                        min,
+                    );
+                    let span = model::Span {
+                        from: base.source_at(from),
+                        to: base.source_at(to),
+                    };
+                    if let Some(link) = self
+                        .echo_clip_mut(&id)
+                        .and_then(|clip| clip.video_effects.get_mut(entry))
+                    {
+                        link.span = Some(span);
+                    }
+                }
+            }
             // A stage gesture is the monitor's; the lanes have nothing to
             // add to it.
             Gesture::None
@@ -4027,6 +4148,23 @@ impl Studio {
                     .unwrap_or(0.0);
                 if (new_duration - f64::from(original_duration)).abs() > 1e-4 {
                     self.set_clip_transition_duration(&clip, new_duration);
+                }
+            }
+            Gesture::EffectSpan { clip, .. } => {
+                let after = echo
+                    .active()
+                    .clip(&clip)
+                    .map(|clip| clip.video_effects.clone());
+                self.echo = None;
+                let before = self.clip(&clip).map(|clip| clip.video_effects.clone());
+                if let Some(chain) = after.filter(|chain| Some(chain) != before.as_ref()) {
+                    self.apply(Command::UpdateClip {
+                        clip_id: clip,
+                        patch: ClipPatch {
+                            video_effects: Some(chain),
+                            ..ClipPatch::default()
+                        },
+                    });
                 }
             }
             Gesture::None => {
@@ -6884,6 +7022,11 @@ impl Studio {
                         wave_from: wave.1,
                         wave_span: wave.2,
                         strip: self.strip_of(clip),
+                        spans: if clip.kind == model::ClipKind::Layer {
+                            ModelRc::default()
+                        } else {
+                            ModelRc::new(VecModel::from(span_rows(clip)))
+                        },
                     }
                 })
                 .collect(),
@@ -9382,9 +9525,57 @@ mod tests {
     use super::{
         Command, Footprint, Studio, adjust_key_names, chain_colours, chain_rows, custom_frame,
         custom_rate, fps_of, grading_rows, home_folder, key_commands, link_key_names, link_param,
-        link_param_name, packed, param_link, place_in, shown, wheel_partners, write_keyable,
-        write_link_param,
+        link_param_name, packed, param_link, place_in, shown, span_offsets_dragged, span_rows,
+        wheel_partners, write_keyable, write_link_param,
     };
+
+    #[test]
+    fn a_span_drag_is_clamped_to_the_clip_and_a_frame() {
+        let min = 1.0 / 30.0;
+        // Body: slides, and stops at either end whole.
+        assert_eq!(span_offsets_dragged(2, 2.0, 4.0, 1.0, 10.0, min), (3.0, 5.0));
+        assert_eq!(span_offsets_dragged(2, 2.0, 4.0, -5.0, 10.0, min), (0.0, 2.0));
+        assert_eq!(span_offsets_dragged(2, 2.0, 4.0, 9.0, 10.0, min), (8.0, 10.0));
+        // Head: cannot pass the tail less a frame, nor the clip's start.
+        let (from, to) = span_offsets_dragged(0, 2.0, 4.0, 5.0, 10.0, min);
+        assert!((from - (4.0 - min)).abs() < 1e-9 && to == 4.0);
+        assert_eq!(span_offsets_dragged(0, 2.0, 4.0, -3.0, 10.0, min), (0.0, 4.0));
+        // Tail: likewise at the other end.
+        assert_eq!(span_offsets_dragged(1, 2.0, 4.0, 20.0, 10.0, min), (2.0, 10.0));
+        let (from, to) = span_offsets_dragged(1, 2.0, 4.0, -5.0, 10.0, min);
+        assert!(from == 2.0 && (to - (2.0 + min)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_span_wholly_trimmed_away_draws_no_bar() {
+        use concat_project::model::{AppliedFilter, Clip, Span};
+        let mut clip = Clip::default();
+        clip.source_start = 0.0;
+        clip.duration = 5.0;
+        let mut inside = AppliedFilter::new("concat.mono");
+        inside.span = Some(Span { from: 1.0, to: 2.0 });
+        let mut outside = AppliedFilter::new("concat.vignette");
+        outside.span = Some(Span { from: 7.0, to: 8.0 });
+        clip.video_effects = vec![inside, outside, AppliedFilter::new("concat.mono")];
+        let rows = span_rows(&clip);
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].entry, rows[0].from, rows[0].length), (0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn overlapping_spans_stack_on_rows_of_their_own() {
+        use concat_project::model::{AppliedFilter, Clip, Span};
+        let mut clip = Clip::default();
+        clip.duration = 10.0;
+        let link = |from: f64, to: f64| {
+            let mut link = AppliedFilter::new("concat.mono");
+            link.span = Some(Span { from, to });
+            link
+        };
+        clip.video_effects = vec![link(1.0, 4.0), link(3.0, 5.0), link(4.5, 6.0)];
+        let rows: Vec<i32> = span_rows(&clip).iter().map(|row| row.row).collect();
+        assert_eq!(rows, [0, 1, 0]);
+    }
 
     /// A wheel is keyed as one knob: named by itself or by any of its own
     /// keys, it keys its puck and master; its master's key takes the puck's

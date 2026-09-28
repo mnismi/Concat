@@ -79,6 +79,18 @@ export struct StripData {
     span: float,
 }
 
+/// One effect on a clip that covers only part of it, as the bar along the
+/// clip's foot draws it. Seconds are into the clip, already clipped to it.
+export struct EffectSpanData {
+    /// which link of the picture chain, handed back on a drag
+    entry: int,
+    name: string,
+    from: float,
+    length: float,
+    /// stacking row, 0 at the foot, for spans that overlap
+    row: int,
+}
+
 /// One placed clip, already reduced to what drawing it needs.
 ///
 /// Positions are in *seconds*, not pixels. Zoom and pan are then a property
@@ -121,6 +133,9 @@ export struct ClipData {
     /// The frames a picture clip tiles along its body; `frames` is 0 when
     /// there are none yet.
     strip: StripData,
+    /// The effects that cover only part of the clip: a bar each along its
+    /// foot, dragged to move or resize the part.
+    spans: [EffectSpanData],
 }
 
 
