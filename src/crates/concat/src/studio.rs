@@ -1436,7 +1436,10 @@ fn span_offsets_dragged(
 ) -> (f64, f64) {
     match part {
         0 => ((from + delta).clamp(0.0, (to - min).max(0.0)), to),
-        1 => (from, (to + delta).clamp((from + min).min(duration), duration)),
+        1 => (
+            from,
+            (to + delta).clamp((from + min).min(duration), duration),
+        ),
         _ => {
             let length = to - from;
             let from = (from + delta).clamp(0.0, (duration - length).max(0.0));
@@ -7280,8 +7283,7 @@ impl Studio {
             match self.sole_selection().and_then(|id| self.clip(&id)) {
                 Some(clip) => {
                     let inside = self.key_point().map(|(_, at)| at);
-                    let (mut visual, visual_params) =
-                        chain_rows(&clip.video_effects, Some(inside));
+                    let (mut visual, visual_params) = chain_rows(&clip.video_effects, Some(inside));
                     span_fields(&mut visual, clip);
                     let (sound, sound_params) = chain_rows(&clip.filters, None);
                     (visual, visual_params, sound, sound_params)
@@ -9616,10 +9618,12 @@ mod tests {
     #[test]
     fn a_fresh_span_starts_at_the_playhead_for_two_seconds_inside_the_clip() {
         use concat_project::model::{Clip, Span};
-        let mut clip = Clip::default();
-        clip.start = 10.0;
-        clip.duration = 5.0;
-        clip.source_start = 1.0;
+        let mut clip = Clip {
+            start: 10.0,
+            duration: 5.0,
+            source_start: 1.0,
+            ..Clip::default()
+        };
         assert_eq!(span_fresh(&clip, 11.0, 0.1), Span { from: 2.0, to: 4.0 });
         // Near the tail it backs up to keep its two seconds.
         assert_eq!(span_fresh(&clip, 14.5, 0.1), Span { from: 4.0, to: 6.0 });
@@ -9634,15 +9638,30 @@ mod tests {
     fn a_span_drag_is_clamped_to_the_clip_and_a_frame() {
         let min = 1.0 / 30.0;
         // Body: slides, and stops at either end whole.
-        assert_eq!(span_offsets_dragged(2, 2.0, 4.0, 1.0, 10.0, min), (3.0, 5.0));
-        assert_eq!(span_offsets_dragged(2, 2.0, 4.0, -5.0, 10.0, min), (0.0, 2.0));
-        assert_eq!(span_offsets_dragged(2, 2.0, 4.0, 9.0, 10.0, min), (8.0, 10.0));
+        assert_eq!(
+            span_offsets_dragged(2, 2.0, 4.0, 1.0, 10.0, min),
+            (3.0, 5.0)
+        );
+        assert_eq!(
+            span_offsets_dragged(2, 2.0, 4.0, -5.0, 10.0, min),
+            (0.0, 2.0)
+        );
+        assert_eq!(
+            span_offsets_dragged(2, 2.0, 4.0, 9.0, 10.0, min),
+            (8.0, 10.0)
+        );
         // Head: cannot pass the tail less a frame, nor the clip's start.
         let (from, to) = span_offsets_dragged(0, 2.0, 4.0, 5.0, 10.0, min);
         assert!((from - (4.0 - min)).abs() < 1e-9 && to == 4.0);
-        assert_eq!(span_offsets_dragged(0, 2.0, 4.0, -3.0, 10.0, min), (0.0, 4.0));
+        assert_eq!(
+            span_offsets_dragged(0, 2.0, 4.0, -3.0, 10.0, min),
+            (0.0, 4.0)
+        );
         // Tail: likewise at the other end.
-        assert_eq!(span_offsets_dragged(1, 2.0, 4.0, 20.0, 10.0, min), (2.0, 10.0));
+        assert_eq!(
+            span_offsets_dragged(1, 2.0, 4.0, 20.0, 10.0, min),
+            (2.0, 10.0)
+        );
         let (from, to) = span_offsets_dragged(1, 2.0, 4.0, -5.0, 10.0, min);
         assert!(from == 2.0 && (to - (2.0 + min)).abs() < 1e-9);
     }
@@ -9650,9 +9669,11 @@ mod tests {
     #[test]
     fn a_span_wholly_trimmed_away_draws_no_bar() {
         use concat_project::model::{AppliedFilter, Clip, Span};
-        let mut clip = Clip::default();
-        clip.source_start = 0.0;
-        clip.duration = 5.0;
+        let mut clip = Clip {
+            source_start: 0.0,
+            duration: 5.0,
+            ..Clip::default()
+        };
         let mut inside = AppliedFilter::new("concat.mono");
         inside.span = Some(Span { from: 1.0, to: 2.0 });
         let mut outside = AppliedFilter::new("concat.vignette");
@@ -9666,8 +9687,10 @@ mod tests {
     #[test]
     fn overlapping_spans_stack_on_rows_of_their_own() {
         use concat_project::model::{AppliedFilter, Clip, Span};
-        let mut clip = Clip::default();
-        clip.duration = 10.0;
+        let mut clip = Clip {
+            duration: 10.0,
+            ..Clip::default()
+        };
         let link = |from: f64, to: f64| {
             let mut link = AppliedFilter::new("concat.mono");
             link.span = Some(Span { from, to });

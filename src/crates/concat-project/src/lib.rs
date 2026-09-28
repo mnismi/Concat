@@ -1771,7 +1771,10 @@ mod tests {
     fn a_span_round_trips_and_an_old_link_has_none() {
         let link = spanned(2.0, 4.0);
         let json = serde_json::to_string(&link).unwrap();
-        assert!(json.contains("\"span\":{\"from\":2.0,\"to\":4.0}"), "{json}");
+        assert!(
+            json.contains("\"span\":{\"from\":2.0,\"to\":4.0}"),
+            "{json}"
+        );
         let old: crate::model::AppliedFilter =
             serde_json::from_str(r#"{"id":"concat.vignette"}"#).unwrap();
         assert_eq!(old.span, None);
@@ -1835,7 +1838,10 @@ mod tests {
             })
             .expect("trims");
         let clip = &editor.project().active().clips[0];
-        assert_eq!(clip.video_effects[0].span, Some(Span { from: 3.0, to: 6.0 }));
+        assert_eq!(
+            clip.video_effects[0].span,
+            Some(Span { from: 3.0, to: 6.0 })
+        );
         // Trimmed past the head of the span: 5..6 s of it still plays.
         assert!((clip.offset_of(6.0) - 1.0).abs() < 1e-9);
         let (id, start) = (clip.id.clone(), clip.start);
@@ -1846,7 +1852,10 @@ mod tests {
             })
             .expect("splits");
         for piece in &editor.project().active().clips {
-            assert_eq!(piece.video_effects[0].span, Some(Span { from: 3.0, to: 6.0 }));
+            assert_eq!(
+                piece.video_effects[0].span,
+                Some(Span { from: 3.0, to: 6.0 })
+            );
         }
     }
 
@@ -1860,8 +1869,14 @@ mod tests {
         assert!((clip.source_at(1.5) - 4.0).abs() < 1e-9);
         assert!((clip.offset_of(4.0) - 1.5).abs() < 1e-9);
         clip.speed_curve = Some(vec![
-            SpeedPoint { at: 0.0, speed: 1.0 },
-            SpeedPoint { at: 1.0, speed: 3.0 },
+            SpeedPoint {
+                at: 0.0,
+                speed: 1.0,
+            },
+            SpeedPoint {
+                at: 1.0,
+                speed: 3.0,
+            },
         ]);
         for offset in [0.0, 0.7, 2.0] {
             let back = clip.offset_of(clip.source_at(offset));

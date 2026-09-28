@@ -2033,7 +2033,14 @@ mod tests {
         link.span = Some(concat_project::model::Span { from: 4.0, to: 6.0 });
         let chains = HashMap::from([(id, vec![link])]);
         let at = |seconds: i64| {
-            passes_at(&chains, &HashMap::new(), &timeline, id, Rational::from(seconds)).len()
+            passes_at(
+                &chains,
+                &HashMap::new(),
+                &timeline,
+                id,
+                Rational::from(seconds),
+            )
+            .len()
         };
         assert_eq!(at(1), 0);
         assert_eq!((at(2), at(3)), (1, 0));

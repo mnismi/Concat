@@ -1556,11 +1556,7 @@ impl Clip {
         if self.kind == ClipKind::Image {
             return self.source_start + offset;
         }
-        match self
-            .speed_curve
-            .as_deref()
-            .and_then(crate::speed::curve_of)
-        {
+        match self.speed_curve.as_deref().and_then(crate::speed::curve_of) {
             Some(curve) if self.duration > 0.0 => {
                 self.source_start + curve.consumed(offset / self.duration) * self.duration
             }
