@@ -173,6 +173,10 @@ impl Titles {
                     media_height: Some(height),
                     has_audio: Some(false),
                     reveal_map: Some(Arc::clone(&art.reveal)),
+                    // The clip's own clock, which a still never reads for
+                    // its pixels but an effect limited to part of the
+                    // title is placed by.
+                    source_start: clip.source_start,
                     ..ExportClip::blank(ClipKind::Image, clip.start, clip.duration, index)
                 },
                 block: art.block,
@@ -504,6 +508,48 @@ mod tests {
             out[0].clip.scale, 1.03,
             "the scale is honoured; only the stretch is not"
         );
+    }
+
+    /// The tail of a cut title keeps its in-point: an effect limited to
+    /// part of a title is placed by that clock, and a still that forgot it
+    /// would play the effect a whole head's length late.
+    #[test]
+    fn a_cut_title_keeps_its_in_point() {
+        let dirs = scratch();
+        let mut editor = Editor::new();
+        let id = editor
+            .apply(Command::AddTextClip {
+                above: false,
+                track_id: None,
+                start: 0.0,
+                style: None,
+                duration: Some(10.0),
+                offset_y: None,
+            })
+            .expect("a title is added")
+            .created_id
+            .expect("with an id");
+        editor
+            .apply(Command::SplitClips {
+                clip_ids: vec![id],
+                time: 5.0,
+            })
+            .expect("cut");
+        let tail = editor
+            .project()
+            .active()
+            .clips
+            .iter()
+            .find(|clip| clip.start > 1.0)
+            .expect("the tail")
+            .source_start;
+        assert!(tail > 0.0, "the model moves the tail's in-point");
+        let out = Titles::new(&dirs).clips(editor.project(), 640, 360);
+        let exported = out
+            .iter()
+            .find(|title| title.clip.start > 1.0)
+            .expect("the tail comes back");
+        assert_eq!(exported.clip.source_start, tail);
     }
 
     /// A text clip comes back as an image clip on its own track, pointing

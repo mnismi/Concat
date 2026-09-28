@@ -1860,6 +1860,21 @@ mod tests {
     }
 
     #[test]
+    fn a_title_runs_on_the_clock_a_still_does() {
+        let mut clip = crate::model::Clip {
+            kind: ClipKind::Text,
+            source_start: 5.0,
+            speed: 2.0,
+            duration: 4.0,
+            ..Default::default()
+        };
+        assert!((clip.source_at(1.0) - 6.0).abs() < 1e-9);
+        assert!((clip.offset_of(6.0) - 1.0).abs() < 1e-9);
+        clip.kind = ClipKind::Video;
+        assert!((clip.source_at(1.0) - 7.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn source_time_follows_the_clip_speed() {
         use crate::model::SpeedPoint;
         let (editor, _, _) = fixture();

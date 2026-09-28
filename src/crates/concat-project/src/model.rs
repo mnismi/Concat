@@ -1545,15 +1545,12 @@ impl Clip {
         self.keys.len() != before
     }
 
-    /// Re-anchors every key - the clip's own and its effects' - after the
-    /// clip's span changed, so each key stays at the instant of the picture
-    /// it was set on.
-    ///
     /// Source seconds at `offset` timeline seconds into the clip: the map
     /// the engine's `source_time_at` draws, speed curve and all. A still
-    /// has no rate, as the export treats it.
+    /// has no rate, as the export treats it - and a title leaves the
+    /// window as one.
     pub fn source_at(&self, offset: f64) -> f64 {
-        if self.kind == ClipKind::Image {
+        if self.unrated() {
             return self.source_start + offset;
         }
         match self.speed_curve.as_deref().and_then(crate::speed::curve_of) {
@@ -1564,11 +1561,17 @@ impl Clip {
         }
     }
 
+    /// A still or a title: played at one source second a second whatever
+    /// its speed says, as the export plays both.
+    fn unrated(&self) -> bool {
+        matches!(self.kind, ClipKind::Image | ClipKind::Text)
+    }
+
     /// Timeline seconds into the clip at which `source` plays; the inverse
     /// of `source_at`, not clamped to the clip - except under a speed
     /// curve, whose map is only known over the clip.
     pub fn offset_of(&self, source: f64) -> f64 {
-        let curved = self.kind != ClipKind::Image
+        let curved = !self.unrated()
             && self.duration > 0.0
             && self
                 .speed_curve
@@ -1576,7 +1579,7 @@ impl Clip {
                 .and_then(crate::speed::curve_of)
                 .is_some();
         if !curved {
-            let rate = if self.kind == ClipKind::Image {
+            let rate = if self.unrated() {
                 1.0
             } else {
                 self.speed.max(1e-6)
@@ -1602,6 +1605,10 @@ impl Clip {
         (low + high) / 2.0
     }
 
+    /// Re-anchors every key - the clip's own and its effects' - after the
+    /// clip's span changed, so each key stays at the instant of the picture
+    /// it was set on.
+    ///
     /// Keys are stored as fractions of the clip's length, which is the
     /// right unit for a preset and the wrong one for an edit: a split, a
     /// trim or a merge changes the length under them, and without this a
