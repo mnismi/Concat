@@ -1424,6 +1424,30 @@ fn chain_colours(chain: &[AppliedFilter]) -> Vec<ColourKnobData> {
 /// through every pane that hosts the lanes. Mirrored in lanes.slint.
 pub const SPAN_EDGE: i32 = 16;
 
+/// The selection after a press on clip `id` at `edge`: a shift-press
+/// toggles it in or out, a plain press on a held clip keeps the set so a
+/// drag carries it, and any other press selects the clip alone. A press on
+/// an effect's span bar always selects its clip alone - the bar is that
+/// clip's, and a set has no one span to move.
+fn pressed_selection(held: &[String], id: &str, additive: bool, edge: i32) -> Vec<String> {
+    let already = held.iter().any(|clip| clip == id);
+    if edge >= SPAN_EDGE {
+        vec![id.to_owned()]
+    } else if additive {
+        if already {
+            held.iter().filter(|clip| clip.as_str() != id).cloned().collect()
+        } else {
+            let mut next = held.to_vec();
+            next.push(id.to_owned());
+            next
+        }
+    } else if already {
+        held.to_vec()
+    } else {
+        vec![id.to_owned()]
+    }
+}
+
 /// A span's new place, in seconds into the clip, after its `part` moved by
 /// `delta`: inside the clip, and never shorter than `min`.
 fn span_offsets_dragged(
@@ -3920,27 +3944,10 @@ impl Studio {
         // now lands before the selection moves: a commit flushed after the
         // change would look for it on the newly selected clip and lose it.
         self.flush_commit();
-        let already = self.selection.iter().any(|held| held == id);
-        self.selection = if additive {
-            if already {
-                self.selection
-                    .iter()
-                    .filter(|held| held.as_str() != id)
-                    .cloned()
-                    .collect()
-            } else {
-                let mut next = self.selection.clone();
-                next.push(id.to_owned());
-                next
-            }
-        } else if already {
-            self.selection.clone()
-        } else {
-            vec![id.to_owned()]
-        };
+        self.selection = pressed_selection(&self.selection, id, additive, edge);
 
         self.begin_echo();
-        if edge >= SPAN_EDGE && self.selection.len() <= 1 {
+        if edge >= SPAN_EDGE {
             let entry = ((edge - SPAN_EDGE) / 4) as usize;
             let part = (edge - SPAN_EDGE) % 4;
             if let Some(span) = clip.video_effects.get(entry).and_then(|link| link.span) {
@@ -9611,9 +9618,22 @@ mod tests {
     use super::{
         Command, Footprint, Studio, adjust_key_names, chain_colours, chain_rows, custom_frame,
         custom_rate, fps_of, grading_rows, home_folder, key_commands, link_key_names, link_param,
-        link_param_name, packed, param_link, place_in, shown, span_fresh, span_offsets_dragged,
+        SPAN_EDGE, link_param_name, packed, param_link, place_in, shown, span_fresh,
+        span_offsets_dragged,
         span_rows, wheel_partners, write_keyable, write_link_param,
     };
+
+    #[test]
+    fn a_press_on_a_span_bar_selects_its_clip_alone() {
+        let held = ["a".to_owned(), "b".to_owned()];
+        // A bar belongs to one clip: grabbing it never carries the rest.
+        assert_eq!(super::pressed_selection(&held, "b", false, SPAN_EDGE + 2), ["b"]);
+        assert_eq!(super::pressed_selection(&held, "b", true, SPAN_EDGE), ["b"]);
+        // The clip itself still carries the set, and a shift-press toggles.
+        assert_eq!(super::pressed_selection(&held, "b", false, -1), ["a", "b"]);
+        assert_eq!(super::pressed_selection(&held, "b", true, -1), ["a"]);
+        assert_eq!(super::pressed_selection(&held, "c", false, 0), ["c"]);
+    }
 
     #[test]
     fn a_fresh_span_starts_at_the_playhead_for_two_seconds_inside_the_clip() {
