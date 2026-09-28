@@ -1449,7 +1449,9 @@ fn pressed_selection(held: &[String], id: &str, additive: bool, edge: i32) -> Ve
 }
 
 /// A span's new place, in seconds into the clip, after its `part` moved by
-/// `delta`: inside the clip, and never shorter than `min`.
+/// `delta`: the moving edge pulled onto whatever `snap` offers - a body by
+/// whichever of its ends comes near - then kept inside the clip, and never
+/// shorter than `min`.
 fn span_offsets_dragged(
     part: i32,
     from: f64,
@@ -1457,16 +1459,24 @@ fn span_offsets_dragged(
     delta: f64,
     duration: f64,
     min: f64,
+    snap: impl Fn(f64) -> f64,
 ) -> (f64, f64) {
     match part {
-        0 => ((from + delta).clamp(0.0, (to - min).max(0.0)), to),
+        0 => (snap(from + delta).clamp(0.0, (to - min).max(0.0)), to),
         1 => (
             from,
-            (to + delta).clamp((from + min).min(duration), duration),
+            snap(to + delta).clamp((from + min).min(duration), duration),
         ),
         _ => {
             let length = to - from;
-            let from = (from + delta).clamp(0.0, (duration - length).max(0.0));
+            let head = from + delta;
+            let snapped = snap(head);
+            let head = if snapped != head {
+                snapped
+            } else {
+                snap(head + length) - length
+            };
+            let from = head.clamp(0.0, (duration - length).max(0.0));
             (from, from + length)
         }
     }
@@ -4130,7 +4140,14 @@ impl Studio {
             } => {
                 let (id, entry) = (clip.clone(), *entry);
                 let min = 1.0 / f64::from(self.frame_rate().max(1.0));
+                let threshold = 8.0 * self.lanes.seconds_per_pixel;
                 if let Some(base) = self.clip(&id).cloned() {
+                    // The timeline's own pulls - the playhead, clip edges,
+                    // this clip's included - in seconds into the clip.
+                    let snap = |offset: f64| {
+                        let at = (base.start + offset) as f32;
+                        f64::from(self.snapped(at, threshold, "")) - base.start
+                    };
                     let (from, to) = span_offsets_dragged(
                         *part,
                         *from,
@@ -4138,6 +4155,7 @@ impl Studio {
                         f64::from(seconds),
                         base.duration,
                         min,
+                        snap,
                     );
                     let span = model::Span {
                         from: base.source_at(from),
@@ -9659,31 +9677,43 @@ mod tests {
         let min = 1.0 / 30.0;
         // Body: slides, and stops at either end whole.
         assert_eq!(
-            span_offsets_dragged(2, 2.0, 4.0, 1.0, 10.0, min),
+            span_offsets_dragged(2, 2.0, 4.0, 1.0, 10.0, min, |x| x),
             (3.0, 5.0)
         );
         assert_eq!(
-            span_offsets_dragged(2, 2.0, 4.0, -5.0, 10.0, min),
+            span_offsets_dragged(2, 2.0, 4.0, -5.0, 10.0, min, |x| x),
             (0.0, 2.0)
         );
         assert_eq!(
-            span_offsets_dragged(2, 2.0, 4.0, 9.0, 10.0, min),
+            span_offsets_dragged(2, 2.0, 4.0, 9.0, 10.0, min, |x| x),
             (8.0, 10.0)
         );
         // Head: cannot pass the tail less a frame, nor the clip's start.
-        let (from, to) = span_offsets_dragged(0, 2.0, 4.0, 5.0, 10.0, min);
+        let (from, to) = span_offsets_dragged(0, 2.0, 4.0, 5.0, 10.0, min, |x| x);
         assert!((from - (4.0 - min)).abs() < 1e-9 && to == 4.0);
         assert_eq!(
-            span_offsets_dragged(0, 2.0, 4.0, -3.0, 10.0, min),
+            span_offsets_dragged(0, 2.0, 4.0, -3.0, 10.0, min, |x| x),
             (0.0, 4.0)
         );
         // Tail: likewise at the other end.
         assert_eq!(
-            span_offsets_dragged(1, 2.0, 4.0, 20.0, 10.0, min),
+            span_offsets_dragged(1, 2.0, 4.0, 20.0, 10.0, min, |x| x),
             (2.0, 10.0)
         );
-        let (from, to) = span_offsets_dragged(1, 2.0, 4.0, -5.0, 10.0, min);
+        let (from, to) = span_offsets_dragged(1, 2.0, 4.0, -5.0, 10.0, min, |x| x);
         assert!(from == 2.0 && (to - (2.0 + min)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_span_drag_snaps_its_moving_edge() {
+        let min = 1.0 / 30.0;
+        // Anything within a fifth of a second of 3 s lands on it.
+        let snap = |x: f64| if (x - 3.0).abs() < 0.2 { 3.0 } else { x };
+        assert_eq!(span_offsets_dragged(0, 2.0, 5.0, 0.9, 10.0, min, snap), (3.0, 5.0));
+        assert_eq!(span_offsets_dragged(1, 1.0, 2.0, 1.1, 10.0, min, snap), (1.0, 3.0));
+        // The body snaps by whichever end comes near, and keeps its length.
+        assert_eq!(span_offsets_dragged(2, 0.0, 1.0, 1.9, 10.0, min, snap), (2.0, 3.0));
+        assert_eq!(span_offsets_dragged(2, 0.0, 1.0, 2.9, 10.0, min, snap), (3.0, 4.0));
     }
 
     #[test]
