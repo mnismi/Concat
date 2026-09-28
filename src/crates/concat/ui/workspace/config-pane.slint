@@ -215,19 +215,20 @@ export component ConfigPane inherits Rectangle {
     property <bool> is-text: root.selected.kind == ClipKind.text;
     property <bool> is-image: root.selected.kind == ClipKind.image;
     property <bool> is-audio: root.selected.kind == ClipKind.audio;
-    /// A filter layer gets its own lone tab for the same reason a title does:
-    /// it has no transform, no gain and no rate, and every other tab could
-    /// only say "nothing here".
+    /// A layer gets its own tab for the same reason a title does: it has no
+    /// transform, no gain and no rate, and those tabs could only say
+    /// "nothing here". Its chain is its own, though - the look or effect it
+    /// was dropped as, with knobs that can ride - so Effects stays.
     property <bool> is-layer: root.selected.kind == ClipKind.filter;
     property <[string]> tabs: root.is-text ? ["Text", "Effects"]
-        : root.is-layer ? ["Filter"]
+        : root.is-layer ? ["Filter", "Effects"]
         : root.is-image ? ["Video", "Effects"]
         : root.is-audio ? ["Audio"]
         : ["Video", "Audio", "Effects"];
     /// The same tabs in the interface's language. `tabs` stays English,
     /// because the panels are picked by comparing against it.
     property <[string]> tabs-shown: root.is-text ? [I18n.t("common.text"), I18n.t("common.effects")]
-        : root.is-layer ? [I18n.t("configPane.filter")]
+        : root.is-layer ? [I18n.t("configPane.filter"), I18n.t("common.effects")]
         : root.is-image ? [I18n.t("common.video"), I18n.t("common.effects")]
         : root.is-audio ? [I18n.t("common.audio")]
         : [I18n.t("common.video"), I18n.t("common.audio"), I18n.t("common.effects")];

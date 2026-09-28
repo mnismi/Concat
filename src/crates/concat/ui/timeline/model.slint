@@ -214,8 +214,9 @@ export global Keyframes {
     callback clear(field: ClipField);
 
     /// The same three verbs for a knob named rather than enumerated - the
-    /// Adjust panel's, whose rows come from the colour package's manifest
-    /// and carry their own key state; see AppliedParamData.
+    /// Adjust panel's by its bare key, a picture chain link's as
+    /// `<entry>#<key>` - whose rows come from a package's manifest and
+    /// carry their own key state; see AppliedParamData.
     callback toggle-param(key: string);
     callback step-param(key: string, delta: int);
     callback clear-param(key: string);
