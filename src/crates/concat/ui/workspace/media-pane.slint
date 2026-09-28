@@ -1188,8 +1188,9 @@ export component ShelfGrid inherits Rectangle {
     in property <[CatalogueEntryData]> entries;
     /// The mark for an entry with no artwork; see CatalogueItemData.
     in property <Glyph> glyph: Glyph.sparkle;
-    /// Names the page for the timeline: "filter" makes every card here a drag
-    /// source that leaves a layer clip, and empty leaves the page click-only.
+    /// Names the page for the timeline: "filter" or "effect" makes every card
+    /// here a drag source that leaves a layer clip, and empty leaves the page
+    /// click-only.
     in property <string> payload-kind;
 
     callback applied(id: string, label: string);
@@ -2081,6 +2082,11 @@ export component MediaPane inherits Rectangle {
                     ShelfGrid {
                         entries: root.audio-shelf ? root.catalogue-audio : root.catalogue-effects;
                         glyph: root.audio-shelf ? Glyph.waveform : Glyph.sparkle;
+                        // A picture effect dragged onto the lanes leaves a
+                        // layer over a span, as a filter does; a click still
+                        // applies it to the whole selected clip. A sound
+                        // effect has no layer to be and stays click-only.
+                        payload-kind: root.audio-shelf ? "" : "effect";
                         // A sound has no picture: its cards are the compact kind.
                         compact: root.audio-shelf;
                         // Effects apply directly on single-click to the selected clip —

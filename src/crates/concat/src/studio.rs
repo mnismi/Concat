@@ -1406,7 +1406,37 @@ fn chain_colours(chain: &[AppliedFilter]) -> Vec<ColourKnobData> {
 /// knob its package declares, holding the document's value or the default.
 /// A link no package answers to keeps its row - so it can be removed - and
 /// gets no knobs.
-fn chain_rows(chain: &[AppliedFilter]) -> (Vec<AppliedEntryData>, Vec<AppliedParamData>) {
+///
+/// `keys` is the playhead's place in the clip when the chain's number
+/// knobs can carry keys - Some(None) when it is outside - and None when
+/// they cannot, as a sound chain's cannot. A keyed knob then shows its
+/// ride's value there, as the Adjust panel's does.
+fn chain_rows(
+    chain: &[AppliedFilter],
+    keys: Option<Option<f64>>,
+) -> (Vec<AppliedEntryData>, Vec<AppliedParamData>) {
+    // What a number knob is worth and its cluster's four facts.
+    let knob = |entry: &AppliedFilter, key: &str, default: f64, numeric: bool| {
+        let keyable = numeric && keys.is_some();
+        let keyed = keyable && entry.is_keyed(key);
+        let at = keys.flatten();
+        let (here, prev, next) = match at {
+            Some(at) if keyed => {
+                let (prev, next) = entry.keys_around(key, at);
+                (
+                    entry.key_at(key, at).is_some(),
+                    prev.is_some(),
+                    next.is_some(),
+                )
+            }
+            _ => (false, false, false),
+        };
+        let value = match at {
+            Some(at) if keyed => entry.value_at(key, at, default),
+            _ => entry.params.get(key).copied().unwrap_or(default),
+        };
+        (value as f32, keyable, keyed, here, prev, next)
+    };
     let catalogue = Catalogue::builtin();
     let mut rows = Vec::new();
     let mut knobs = Vec::new();
@@ -1432,6 +1462,8 @@ fn chain_rows(chain: &[AppliedFilter]) -> (Vec<AppliedEntryData>, Vec<AppliedPar
         // Every filter has an intensity whether or not it says so: the one
         // slider a look is expected to have. First, above the look's own.
         if package.kind() == PackageKind::Filter {
+            let (value, keyable, keyed, here, prev, next) =
+                knob(entry, concat_effects::catalogue::INTENSITY, 100.0, true);
             knobs.push(AppliedParamData {
                 entry: index as i32,
                 key: concat_effects::catalogue::INTENSITY.into(),
@@ -1442,17 +1474,13 @@ fn chain_rows(chain: &[AppliedFilter]) -> (Vec<AppliedEntryData>, Vec<AppliedPar
                 max: 100.0,
                 step: 1.0,
                 default_value: 100.0,
-                value: entry
-                    .params
-                    .get(concat_effects::catalogue::INTENSITY)
-                    .copied()
-                    .unwrap_or(100.0) as f32,
+                value,
                 fmt: ParamFormat::Percent,
-                keyable: false,
-                keyed: false,
-                here: false,
-                prev: false,
-                next: false,
+                keyable,
+                keyed,
+                here,
+                prev,
+                next,
             });
         }
         // A colour is a swatch of its own (see `chain_colours`), and a wheel
@@ -1468,6 +1496,11 @@ fn chain_rows(chain: &[AppliedFilter]) -> (Vec<AppliedEntryData>, Vec<AppliedPar
             } else {
                 (param.max - param.min) / 200.0
             };
+            // A number rides; a switch or a choice holds still, having no
+            // in-between to ride through.
+            let numeric = matches!(param.kind, ParamType::Float | ParamType::Int);
+            let (value, keyable, keyed, here, prev, next) =
+                knob(entry, &param.key, param.default, numeric);
             knobs.push(AppliedParamData {
                 entry: index as i32,
                 key: param.key.as_str().into(),
@@ -1478,17 +1511,13 @@ fn chain_rows(chain: &[AppliedFilter]) -> (Vec<AppliedEntryData>, Vec<AppliedPar
                 max: param.max as f32,
                 step: step as f32,
                 default_value: param.default as f32,
-                value: entry
-                    .params
-                    .get(&param.key)
-                    .copied()
-                    .unwrap_or(param.default) as f32,
+                value,
                 fmt: format_of(&param.unit),
-                keyable: false,
-                keyed: false,
-                here: false,
-                prev: false,
-                next: false,
+                keyable,
+                keyed,
+                here,
+                prev,
+                next,
             });
         }
     }
@@ -1614,6 +1643,74 @@ fn adjust_key_names(key: &str) -> Vec<(String, f64)> {
         }
         Some(param) => vec![(key.to_owned(), param.default)],
         None => vec![(key.to_owned(), 0.0)],
+    }
+}
+
+/// How a knob of a picture chain's link is named where only a string
+/// travels - the keyframe cluster, the keyframes pane: `<entry>#<key>`. A
+/// bare key is the Adjust panel's; see `link_param`.
+fn link_param_name(entry: usize, key: &str) -> String {
+    format!("{entry}#{key}")
+}
+
+/// A `link_param_name` taken apart: the link's index in the picture chain
+/// and the knob's key. None for a bare key, which is the Adjust panel's.
+fn link_param(param: &str) -> Option<(usize, &str)> {
+    let (entry, key) = param.split_once('#')?;
+    Some((entry.parse().ok()?, key))
+}
+
+/// Where a keyed knob named `param` lives in `clip`'s picture chain: the
+/// link's index and the knob's key. A bare key is the Adjust link's.
+fn param_link<'a>(clip: &Clip, param: &'a str) -> Option<(usize, &'a str)> {
+    match link_param(param) {
+        Some((entry, key)) => (entry < clip.video_effects.len()).then_some((entry, key)),
+        None => clip
+            .video_effects
+            .iter()
+            .position(|entry| entry.id == ADJUST_ID)
+            .map(|entry| (entry, param)),
+    }
+}
+
+/// The document keys one knob of `link` is keyed under, with what each is
+/// worth with no key: the Adjust link's as `adjust_key_names` has them, any
+/// other link's knob alone at its package's default.
+fn link_key_names(link: &AppliedFilter, key: &str) -> Vec<(String, f64)> {
+    if link.id == ADJUST_ID {
+        return adjust_key_names(key);
+    }
+    let default = Catalogue::builtin()
+        .packages()
+        .find(|package| package.answers_to(&link.id))
+        .and_then(|package| {
+            if key == concat_effects::catalogue::INTENSITY {
+                return Some(100.0);
+            }
+            package
+                .manifest
+                .params
+                .iter()
+                .find(|param| param.key == key)
+                .map(|param| param.default)
+        })
+        .unwrap_or(0.0);
+    vec![(key.to_owned(), default)]
+}
+
+/// Writes one knob of a link the way the person means it: the constant
+/// while the knob holds still, and once it rides, the key at `at` - put on
+/// if there was none, with the ease of the key behind it. `at` is None
+/// when the playhead is outside the clip, where a key cannot land.
+fn write_link_param(link: &mut AppliedFilter, key: &str, value: f64, at: Option<f64>) {
+    match at {
+        Some(at) if link.is_keyed(key) => {
+            let ease = ease_before(link.keys_on(key), at);
+            link.set_key(key, at, value, ease);
+        }
+        _ => {
+            link.params.insert(key.to_owned(), value);
+        }
     }
 }
 
@@ -2893,9 +2990,11 @@ impl Studio {
                 duration: LAYER_DURATION,
                 row: 0,
             }),
-            // A look dragged from the Filters page: a layer over a span.
-            // The package id rides in `media`, there being no file.
-            "filter" => Some(DropPlan {
+            // A look dragged from the Filters page, or an effect from the
+            // Effects page: a layer over a span, treating whatever is under
+            // it for as long as it runs. The package id rides in `media`,
+            // there being no file.
+            "filter" | "effect" => Some(DropPlan {
                 kind: ClipKind::Filter,
                 label: label.to_owned(),
                 media: id.to_owned(),
@@ -3348,10 +3447,17 @@ impl Studio {
         });
     }
 
-    /// One knob of one link, on the echo. `clip_commit` makes it real.
+    /// One knob of one link, on the echo. `clip_commit` makes it real. A
+    /// picture link's knob that rides is written as the key at the
+    /// playhead, as the Adjust panel's is; see `write_link_param`.
     pub fn chain_set_param(&mut self, audio: bool, index: i32, key: &str, value: f32) {
         let Some(id) = self.sole_selection() else {
             return;
+        };
+        let point = if audio {
+            None
+        } else {
+            self.key_point().map(|(_, at)| at)
         };
         self.begin_echo();
         let Some(clip) = self.echo_clip_mut(&id) else {
@@ -3363,7 +3469,7 @@ impl Studio {
             &mut clip.video_effects
         };
         if let Some(entry) = usize::try_from(index).ok().and_then(|i| chain.get_mut(i)) {
-            entry.params.insert(key.to_owned(), f64::from(value));
+            write_link_param(entry, key, f64::from(value), point);
         }
     }
 
@@ -3372,19 +3478,11 @@ impl Studio {
     /// untouched clip carries nothing. A wheel's puck and master are knobs
     /// of their own here, `<key>.x`, `<key>.y` and `<key>.m`.
     pub fn adjust_set(&mut self, key: &str, value: f32) {
+        // A knob that rides is edited where the playhead is: the value
+        // becomes the key there, put on if there was none. Setting the
+        // constant under a ride would change nothing on screen.
         let point = self.key_point().map(|(_, at)| at);
-        self.edit_adjust_link(|link| match point {
-            // A knob that rides is edited where the playhead is: the value
-            // becomes the key there, put on if there was none. Setting the
-            // constant under a ride would change nothing on screen.
-            Some(at) if link.is_keyed(key) => {
-                let ease = ease_before(link.keys_on(key), at);
-                link.set_key(key, at, f64::from(value), ease);
-            }
-            _ => {
-                link.params.insert(key.to_owned(), f64::from(value));
-            }
-        });
+        self.edit_adjust_link(|link| write_link_param(link, key, f64::from(value), point));
     }
 
     /// One point of one of the colour panel's curves, on the echo: moved,
@@ -3490,7 +3588,16 @@ impl Studio {
     /// at that instant, so pressing the diamond never moves the picture. A
     /// wheel - named by itself or by one of its own keys - is one knob: its
     /// puck and master are keyed, and unkeyed, together.
+    ///
+    /// A key named `<entry>#<key>` is a knob of that link of the picture
+    /// chain instead - an effect's or a filter's - and keys the same way.
     pub fn toggle_adjust_key(&mut self, key: &str) {
+        if let Some((entry, key)) = link_param(key) {
+            if let Some((clip, at)) = self.link_point(entry) {
+                self.toggle_link_key(&clip, entry, key, at);
+            }
+            return;
+        }
         let Some((clip, at, entry)) = self.adjust_point() else {
             return;
         };
@@ -3519,7 +3626,24 @@ impl Studio {
             self.apply(Command::Batch { commands });
             return;
         };
+        self.toggle_link_key(&clip, entry, key, at);
+    }
+
+    /// The selected clip and the playhead's place in it, when the link
+    /// `entry` of its picture chain is there to carry keys. Any clip with a
+    /// chain qualifies - a layer's as much as a video's.
+    fn link_point(&self, entry: usize) -> Option<(Clip, f64)> {
+        let (clip, at) = self.key_point()?;
+        (entry < clip.video_effects.len()).then(|| (clip.clone(), at))
+    }
+
+    /// Puts a key on one knob of the picture chain's link `entry` at `at`,
+    /// or takes off the one there. The new key holds what the knob is
+    /// worth at that instant, so pressing the diamond never moves the
+    /// picture.
+    fn toggle_link_key(&mut self, clip: &Clip, entry: usize, key: &str, at: f64) {
         let link = &clip.video_effects[entry];
+        let names = link_key_names(link, key);
         // The knob is keyed here when its own key - a wheel's master - is.
         let on = names
             .last()
@@ -3529,14 +3653,14 @@ impl Studio {
             .filter_map(|(name, default)| {
                 if on {
                     link.key_at(name, at).map(|_| Command::ClearEffectKey {
-                        clip_id: clip_id.clone(),
+                        clip_id: clip.id.clone(),
                         entry,
                         key: name.clone(),
                         at,
                     })
                 } else {
                     Some(Command::SetEffectKey {
-                        clip_id: clip_id.clone(),
+                        clip_id: clip.id.clone(),
                         entry,
                         key: name.clone(),
                         at,
@@ -3546,22 +3670,31 @@ impl Studio {
                 }
             })
             .collect();
-        let command = if commands.len() == 1 {
-            commands.remove(0)
-        } else {
-            Command::Batch { commands }
+        let command = match commands.len() {
+            0 => return,
+            1 => commands.remove(0),
+            _ => Command::Batch { commands },
         };
         self.apply(command);
     }
 
     /// Takes every key off one Adjust knob - a wheel's puck and master
-    /// together - leaving it the value it holds.
+    /// together - leaving it the value it holds. `<entry>#<key>` names a
+    /// knob of another link of the picture chain, as for
+    /// `toggle_adjust_key`.
     pub fn clear_adjust_keys(&mut self, key: &str) {
-        let Some((clip, _, Some(entry))) = self.adjust_point() else {
-            return;
+        let (clip, entry, key) = match link_param(key) {
+            Some((entry, key)) => match self.link_point(entry) {
+                Some((clip, _)) => (clip, entry, key),
+                None => return,
+            },
+            None => match self.adjust_point() {
+                Some((clip, _, Some(entry))) => (clip, entry, key),
+                _ => return,
+            },
         };
         let link = &clip.video_effects[entry];
-        let mut commands: Vec<Command> = adjust_key_names(key)
+        let mut commands: Vec<Command> = link_key_names(link, key)
             .into_iter()
             .filter(|(name, _)| link.is_keyed(name))
             .map(|(name, _)| Command::ClearEffectKeys {
@@ -3582,11 +3715,19 @@ impl Studio {
     }
 
     /// Moves the playhead to an Adjust knob's previous (-1) or next (+1) key.
+    /// `<entry>#<key>` names a knob of another link of the picture chain.
     pub fn step_adjust_key(&mut self, key: &str, delta: i32) {
-        let Some((clip, at, Some(entry))) = self.adjust_point() else {
-            return;
+        let (clip, at, entry, key) = match link_param(key) {
+            Some((entry, key)) => match self.link_point(entry) {
+                Some((clip, at)) => (clip, at, entry, key),
+                None => return,
+            },
+            None => match self.adjust_point() {
+                Some((clip, at, Some(entry))) => (clip, at, entry, key),
+                _ => return,
+            },
         };
-        let Some((name, _)) = adjust_key_names(key).pop() else {
+        let Some((name, _)) = link_key_names(&clip.video_effects[entry], key).pop() else {
             return;
         };
         let (prev, next) = clip.video_effects[entry].keys_around(&name, at);
@@ -6907,8 +7048,9 @@ impl Studio {
         let (visual, visual_params, sound, sound_params) =
             match self.sole_selection().and_then(|id| self.clip(&id)) {
                 Some(clip) => {
-                    let (visual, visual_params) = chain_rows(&clip.video_effects);
-                    let (sound, sound_params) = chain_rows(&clip.filters);
+                    let inside = self.key_point().map(|(_, at)| at);
+                    let (visual, visual_params) = chain_rows(&clip.video_effects, Some(inside));
+                    let (sound, sound_params) = chain_rows(&clip.filters, None);
                     (visual, visual_params, sound, sound_params)
                 }
                 None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
@@ -7396,6 +7538,56 @@ impl Studio {
                 }
             }
         }
+        // Every other link's number knobs that ride, named the way the
+        // inspector's clusters name them and labelled with their link, so
+        // two effects' "Amount"s can be told apart.
+        let inside = self.key_point().map(|(_, at)| at);
+        let (links, knobs) = chain_rows(&clip.video_effects, Some(inside));
+        for row in knobs.into_iter().filter(|row| row.keyed) {
+            let Ok(entry) = usize::try_from(row.entry) else {
+                continue;
+            };
+            let (Some(link), Some(owner)) = (clip.video_effects.get(entry), links.get(entry))
+            else {
+                continue;
+            };
+            let keys: Vec<(f64, f64, model::KeyEase)> = link
+                .keys_on(&row.key)
+                .iter()
+                .map(|key| (key.at, key.value, key.ease))
+                .collect();
+            let (minimum, maximum) = (f64::from(row.min), f64::from(row.max));
+            let (marks, curve, ease_index) = marks_and_curve(&keys, &|value| {
+                if maximum > minimum {
+                    (value - minimum) / (maximum - minimum)
+                } else {
+                    0.5
+                }
+            });
+            rows.push(KeyRowData {
+                field: ClipField::Scale,
+                param: link_param_name(entry, &row.key).into(),
+                label: format!("{} · {}", owner.name, row.label).into(),
+                keys: marks,
+                state: ClipKeyData {
+                    field: ClipField::Scale,
+                    keyed: true,
+                    here: row.here,
+                    prev: row.prev,
+                    next: row.next,
+                },
+                value: row.value,
+                minimum: row.min,
+                maximum: row.max,
+                step: row.step,
+                default_value: row.default_value,
+                fmt: row.fmt,
+                unit: row.unit.clone(),
+                unit_scale: 1.0,
+                curve: curve.into(),
+                ease_index,
+            });
+        }
         rows
     }
 
@@ -7433,21 +7625,25 @@ impl Studio {
                 },
             ]
         } else {
-            let Some(entry) = clip
-                .video_effects
-                .iter()
-                .position(|entry| entry.id == ADJUST_ID)
-            else {
+            let Some((entry, param)) = param_link(clip, param) else {
                 return;
             };
             let link = &clip.video_effects[entry];
             let Some(index) = link.key_at(param, from) else {
                 return;
             };
-            let Some(row) = adjust_rows(&clip.video_effects, Some(from))
-                .into_iter()
-                .find(|row| row.key == param)
-            else {
+            // The knob's range, from whichever panel draws it.
+            let row = if link.id == ADJUST_ID {
+                adjust_rows(&clip.video_effects, Some(from))
+                    .into_iter()
+                    .find(|row| row.key == param)
+            } else {
+                chain_rows(&clip.video_effects, Some(Some(from)))
+                    .1
+                    .into_iter()
+                    .find(|row| row.entry == entry as i32 && row.key == param)
+            };
+            let Some(row) = row else {
                 return;
             };
             let (minimum, maximum) = (f64::from(row.min), f64::from(row.max));
@@ -7476,8 +7672,8 @@ impl Studio {
     }
 
     /// The selected clip's keys as instants on the timeline, every property
-    /// and Adjust knob together, one diamond per instant: what the ruler
-    /// draws while exactly one clip is selected (#188).
+    /// and every picture link's knob together, one diamond per instant:
+    /// what the ruler draws while exactly one clip is selected (#188).
     pub fn key_marks(&self) -> Vec<f32> {
         let Some(clip) = self.sole_selection().and_then(|id| self.clip(&id)) else {
             return Vec::new();
@@ -7486,11 +7682,7 @@ impl Studio {
             .iter()
             .flat_map(|&property| clip.keys_on(property).map(|key| key.at))
             .collect();
-        if let Some(link) = clip
-            .video_effects
-            .iter()
-            .find(|entry| entry.id == ADJUST_ID)
-        {
+        for link in &clip.video_effects {
             ats.extend(link.keys.values().flatten().map(|key| key.at));
         }
         ats.sort_by(f64::total_cmp);
@@ -7532,12 +7724,7 @@ impl Studio {
                 ease: key.ease,
             });
         }
-        if let Some(entry) = clip
-            .video_effects
-            .iter()
-            .position(|entry| entry.id == ADJUST_ID)
-        {
-            let link = &clip.video_effects[entry];
+        for (entry, link) in clip.video_effects.iter().enumerate() {
             for name in link.keys.keys() {
                 let Some(index) = link.key_at(name, from_at) else {
                     continue;
@@ -7606,11 +7793,7 @@ impl Studio {
                 },
             ]
         } else {
-            let Some(entry) = clip
-                .video_effects
-                .iter()
-                .position(|entry| entry.id == ADJUST_ID)
-            else {
+            let Some((entry, param)) = param_link(clip, param) else {
                 return;
             };
             let link = &clip.video_effects[entry];
@@ -7665,11 +7848,7 @@ impl Studio {
                 ease,
             }
         } else {
-            let Some(entry) = clip
-                .video_effects
-                .iter()
-                .position(|entry| entry.id == ADJUST_ID)
-            else {
+            let Some((entry, param)) = param_link(clip, param) else {
                 return;
             };
             let link = &clip.video_effects[entry];
@@ -7709,11 +7888,7 @@ impl Studio {
             .iter()
             .flat_map(|&property| clip.keys_on(property).map(|key| key.at))
             .collect();
-        if let Some(link) = clip
-            .video_effects
-            .iter()
-            .find(|entry| entry.id == ADJUST_ID)
-        {
+        for link in &clip.video_effects {
             candidates.extend(link.keys.values().flatten().map(|key| key.at));
         }
         let target = if delta < 0 {
@@ -7736,8 +7911,8 @@ impl Studio {
         self.seek((start + target * duration) as f32);
     }
 
-    /// Takes every key off the selected clip: its properties and its
-    /// Adjust knobs, as one undo step.
+    /// Takes every key off the selected clip: its properties and every
+    /// picture link's knobs, as one undo step.
     pub fn clear_all_keys(&mut self) {
         let Some(clip) = self.sole_selection().and_then(|id| self.clip(&id)) else {
             return;
@@ -7751,12 +7926,8 @@ impl Studio {
                 property,
             })
             .collect();
-        if let Some(entry) = clip
-            .video_effects
-            .iter()
-            .position(|entry| entry.id == ADJUST_ID)
-        {
-            for key in clip.video_effects[entry].keys.keys() {
+        for (entry, link) in clip.video_effects.iter().enumerate() {
+            for key in link.keys.keys() {
                 commands.push(Command::ClearEffectKeys {
                     clip_id: clip_id.clone(),
                     entry,
@@ -9202,8 +9373,9 @@ impl Studio {
 mod tests {
     use super::{
         Command, Footprint, Studio, adjust_key_names, chain_colours, chain_rows, custom_frame,
-        custom_rate, fps_of, grading_rows, home_folder, key_commands, packed, place_in, shown,
-        wheel_partners, write_keyable,
+        custom_rate, fps_of, grading_rows, home_folder, key_commands, link_key_names, link_param,
+        link_param_name, packed, param_link, place_in, shown, wheel_partners, write_keyable,
+        write_link_param,
     };
 
     /// A wheel is keyed as one knob: named by itself or by any of its own
@@ -9269,7 +9441,7 @@ mod tests {
     fn a_colour_knob_is_a_swatch() {
         use concat_project::model::AppliedFilter;
         let mut link = AppliedFilter::new("concat.chroma-key");
-        let (_, knobs) = chain_rows(std::slice::from_ref(&link));
+        let (_, knobs) = chain_rows(std::slice::from_ref(&link), None);
         assert!(knobs.iter().all(|knob| knob.key != "color"), "no slider");
         assert!(knobs.iter().any(|knob| knob.key == "similarity"));
         let colours = chain_colours(std::slice::from_ref(&link));
@@ -9449,5 +9621,87 @@ mod tests {
         );
         assert_eq!(place_in(&after, 2.5), 0.25);
         assert_eq!(place_in(&after, 12.0), 1.0, "held to the end");
+    }
+
+    /// A chain link's knob travels as `<entry>#<key>`; a bare key is the
+    /// Adjust panel's, and finds the Adjust link wherever it sits.
+    #[test]
+    fn a_link_knob_is_named_by_its_link_and_key() {
+        use concat_project::model::{AppliedFilter, Clip, ClipKind};
+        assert_eq!(link_param_name(2, "strength"), "2#strength");
+        assert_eq!(link_param("2#strength"), Some((2, "strength")));
+        assert_eq!(link_param("exposure"), None);
+        assert_eq!(link_param("x#strength"), None, "an entry is a number");
+
+        let mut clip = Clip::blank("c1", "t1", ClipKind::Video, "clip", 0.0, 10.0);
+        clip.video_effects = vec![
+            AppliedFilter::new("concat.vignette"),
+            AppliedFilter::new("concat.adjust"),
+        ];
+        assert_eq!(param_link(&clip, "0#strength"), Some((0, "strength")));
+        assert_eq!(param_link(&clip, "exposure"), Some((1, "exposure")));
+        assert_eq!(param_link(&clip, "5#strength"), None, "past the chain");
+    }
+
+    /// A picture chain's number knobs carry keys: a keyed one shows its
+    /// ride's value at the playhead and where its keys are. A switch does
+    /// not, and neither does anything on a chain that cannot key.
+    #[test]
+    fn a_chain_knob_rides_where_it_is_keyed() {
+        use concat_project::model::{AppliedFilter, KeyEase};
+        let mut vignette = AppliedFilter::new("concat.vignette");
+        vignette.set_key("strength", 0.0, 10.0, KeyEase::LINEAR);
+        vignette.set_key("strength", 1.0, 90.0, KeyEase::LINEAR);
+        let chain = [vignette, AppliedFilter::new("concat.luma-key")];
+
+        let (_, knobs) = chain_rows(&chain, Some(Some(0.5)));
+        let strength = knobs
+            .iter()
+            .find(|knob| knob.entry == 0 && knob.key == "strength")
+            .expect("the vignette's strength");
+        assert!(strength.keyable && strength.keyed);
+        assert!(!strength.here, "no key at the middle");
+        assert!(strength.prev && strength.next);
+        assert_eq!(strength.value, 50.0, "halfway along the ride");
+        let invert = knobs
+            .iter()
+            .find(|knob| knob.entry == 1 && knob.key == "invert")
+            .expect("the luma key's invert");
+        assert!(!invert.keyable, "a switch holds still");
+
+        let (_, knobs) = chain_rows(&chain, Some(None));
+        let strength = knobs.iter().find(|knob| knob.key == "strength").unwrap();
+        assert!(strength.keyable && strength.keyed, "outside: still keyed");
+        assert!(!strength.prev && !strength.next, "but nowhere to step from");
+
+        let (_, knobs) = chain_rows(&chain, None);
+        assert!(knobs.iter().all(|knob| !knob.keyable), "a sound chain's");
+    }
+
+    /// A link's knob that holds still is written as its constant; once it
+    /// rides, as the key at the playhead, with the constant left alone. It
+    /// keys alone, from its package's default.
+    #[test]
+    fn a_keyed_link_knob_is_written_as_a_key() {
+        use concat_project::model::{AppliedFilter, KeyEase};
+        let mut link = AppliedFilter::new("concat.vignette");
+        assert_eq!(
+            link_key_names(&link, "strength"),
+            [("strength".to_owned(), 50.0)]
+        );
+
+        write_link_param(&mut link, "strength", 70.0, Some(0.5));
+        assert_eq!(link.params["strength"], 70.0, "not keyed: the constant");
+        assert!(!link.is_keyed("strength"));
+
+        link.set_key("strength", 0.0, 20.0, KeyEase::LINEAR);
+        write_link_param(&mut link, "strength", 80.0, Some(0.5));
+        assert_eq!(link.params["strength"], 70.0, "keyed: left alone");
+        assert_eq!(link.keys_on("strength").len(), 2);
+        assert_eq!(link.value_at("strength", 0.5, 50.0), 80.0);
+
+        write_link_param(&mut link, "strength", 30.0, None);
+        assert_eq!(link.params["strength"], 30.0, "outside: the constant");
+        assert_eq!(link.keys_on("strength").len(), 2);
     }
 }

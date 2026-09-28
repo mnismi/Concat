@@ -143,8 +143,9 @@ export struct AppliedParamData {
     default-value: float,
     value: float,
     fmt: ParamFormat,
-    /// The knob can carry keys - the Adjust panel's can, a chain's cannot
-    /// yet - and, when it can, the same four facts a ClipKeyData holds:
+    /// The knob can carry keys - the Adjust panel's and a picture chain's
+    /// number knobs can, a sound chain's cannot - and, when it can, the
+    /// same four facts a ClipKeyData holds:
     /// it rides at all, a key sits under the playhead, and there is one
     /// behind or ahead to step to.
     keyable: bool,
@@ -398,6 +399,18 @@ export component PresetStack inherits VerticalLayout {
                                 fmt: p.fmt;
                                 unit: p.unit;
                                 enabled: item.on;
+                                // A picture link's number knob keys as an
+                                // Adjust knob does, named by its link and
+                                // key; a sound chain's is never keyable.
+                                keyable: p.keyable;
+                                key-name: "\{p.entry}#\{p.key}";
+                                key-state: {
+                                    field: ClipField.scale,
+                                    keyed: p.keyed,
+                                    here: p.here,
+                                    prev: p.prev,
+                                    next: p.next,
+                                };
                                 changed(v) => {
                                     root.set-param(index, p.key, v);
                                     root.commit();
