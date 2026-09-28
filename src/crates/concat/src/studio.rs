@@ -557,6 +557,10 @@ pub struct Models {
     pub tabs: Rc<VecModel<TimelineTabData>>,
     pub tracks: Rc<VecModel<TrackData>>,
     pub clips: Rc<VecModel<ClipData>>,
+    /// Each clip's effect bars, by clip id: one model per clip for its
+    /// life, updated in place, for the reason above - a bar rebuilt under
+    /// the pointer would drop the drag it is carrying. See `span_model`.
+    pub spans: RefCell<HashMap<String, Rc<VecModel<EffectSpanData>>>>,
     pub stage: Rc<VecModel<StageItemData>>,
     pub guides: Rc<VecModel<StageGuideData>>,
     pub media: Rc<VecModel<MediaItemData>>,
@@ -636,6 +640,7 @@ impl Models {
             tabs: Rc::new(VecModel::default()),
             tracks: Rc::new(VecModel::default()),
             clips: Rc::new(VecModel::default()),
+            spans: RefCell::new(HashMap::new()),
             stage: Rc::new(VecModel::default()),
             guides: Rc::new(VecModel::default()),
             media: Rc::new(VecModel::default()),
@@ -1449,6 +1454,27 @@ fn pressed_selection(held: &[String], id: &str, additive: bool, edge: i32) -> Ve
     } else {
         vec![id.to_owned()]
     }
+}
+
+/// The bars of clip `id` as the lanes are handed them: the clip's own
+/// model from `cache`, its rows brought up to `rows` in place, so a
+/// publish never swaps the model under a bar that is being dragged. None
+/// at all is the empty model, and the clip's entry goes.
+fn span_model(
+    cache: &mut HashMap<String, Rc<VecModel<EffectSpanData>>>,
+    id: &str,
+    rows: Vec<EffectSpanData>,
+) -> ModelRc<EffectSpanData> {
+    if rows.is_empty() {
+        cache.remove(id);
+        return ModelRc::default();
+    }
+    let model = cache
+        .entry(id.to_owned())
+        .or_insert_with(|| Rc::new(VecModel::default()))
+        .clone();
+    sync(&model, rows);
+    ModelRc::from(model)
 }
 
 /// A span's new place, in seconds into the clip, after its `part` moved by
@@ -7090,6 +7116,9 @@ impl Studio {
         // Only the clips near the view: what the lanes show plus a screen
         // either side; see `TimelinePane::published_span`.
         let span = self.lanes.published_span();
+        let mut spans = models.spans.borrow_mut();
+        // A clip that has gone takes its bars with it.
+        spans.retain(|id, _| timeline.clips.iter().any(|clip| &clip.id == id));
         sync(
             &models.clips,
             timeline
@@ -7136,15 +7165,21 @@ impl Studio {
                         wave_from: wave.1,
                         wave_span: wave.2,
                         strip: self.strip_of(clip),
-                        spans: if clip.kind == model::ClipKind::Layer {
-                            ModelRc::default()
-                        } else {
-                            ModelRc::new(VecModel::from(span_rows(clip)))
-                        },
+                        spans: span_model(
+                            &mut spans,
+                            &clip.id,
+                            if clip.kind == model::ClipKind::Layer {
+                                Vec::new()
+                            } else {
+                                span_rows(clip)
+                            },
+                        ),
                     }
                 })
                 .collect(),
         );
+
+        drop(spans);
 
         // What is under the playhead. The topmost picture wins, the way the
         // compositor stacks them.
@@ -9643,6 +9678,30 @@ mod tests {
         link_param, link_param_name, packed, param_link, place_in, shown, span_fresh,
         span_offsets_dragged, span_rows, wheel_partners, write_keyable, write_link_param,
     };
+
+    /// A clip's bars keep one model across publishes: a new one would
+    /// rebuild every bar, the one under a held pointer included, and a drag
+    /// would end the moment it began.
+    #[test]
+    fn a_clip_keeps_one_span_model_across_publishes() {
+        use slint::Model;
+        let row = |from: f32| crate::ui::EffectSpanData {
+            entry: 0,
+            name: "Fisheye".into(),
+            from,
+            length: 1.0,
+            row: 0,
+        };
+        let mut cache = std::collections::HashMap::new();
+        let first = super::span_model(&mut cache, "c", vec![row(0.0)]);
+        let second = super::span_model(&mut cache, "c", vec![row(1.5)]);
+        assert!(first == second, "the same model, updated in place");
+        assert_eq!(second.row_data(0).map(|span| span.from), Some(1.5));
+        // A clip with no bars carries the empty model, which every other
+        // publish of it compares equal to.
+        assert!(super::span_model(&mut cache, "c", Vec::new()) == slint::ModelRc::default());
+        assert!(cache.is_empty());
+    }
 
     #[test]
     fn a_press_on_a_span_bar_selects_its_clip_alone() {
