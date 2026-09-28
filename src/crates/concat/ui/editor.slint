@@ -194,6 +194,10 @@ export global Editor {
     callback chain-move-by(audio: bool, index: int, delta: int);
     callback chain-remove(audio: bool, index: int);
     callback chain-set-param(audio: bool, index: int, key: string, value: float);
+    /// A picture link limited to part of its clip, or given the whole clip
+    /// back; and its part set from typed times, in seconds into the clip.
+    callback chain-span-toggle(index: int);
+    callback chain-span-set(index: int, from: float, to: float);
 
     in-out property <[EffectData]> video-effects;
     in-out property <[EffectData]> audio-effects;

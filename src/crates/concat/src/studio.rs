@@ -1445,6 +1445,24 @@ fn span_offsets_dragged(
     }
 }
 
+/// The span a link takes when the person first limits it: two seconds
+/// from the playhead, backed up to stay inside the clip, from its head
+/// when the playhead is off it.
+fn span_fresh(clip: &Clip, playhead: f64, min: f64) -> model::Span {
+    let length = 2.0_f64.min(clip.duration).max(min.min(clip.duration));
+    let wanted = playhead - clip.start;
+    let at = if (0.0..clip.duration).contains(&wanted) {
+        wanted
+    } else {
+        0.0
+    };
+    let from = at.min(clip.duration - length).max(0.0);
+    model::Span {
+        from: clip.source_at(from),
+        to: clip.source_at(from + length),
+    }
+}
+
 /// The bars the lanes draw along a clip's foot: one per live spanned
 /// effect, in seconds into the clip, clipped to it, stacked so two that
 /// overlap sit on rows of their own. A span trimmed wholly away draws none.
@@ -1483,6 +1501,19 @@ fn span_rows(clip: &Clip) -> Vec<EffectSpanData> {
         });
     }
     rows
+}
+
+/// The picture chain's rows with where each link plays, in seconds into
+/// the clip, for the Effects card's start and end.
+fn span_fields(rows: &mut [AppliedEntryData], clip: &Clip) {
+    for (row, link) in rows.iter_mut().zip(&clip.video_effects) {
+        row.span_max = clip.duration as f32;
+        if let Some(span) = link.span {
+            row.spanned = true;
+            row.span_from = clip.offset_of(span.from).clamp(0.0, clip.duration) as f32;
+            row.span_to = clip.offset_of(span.to).clamp(0.0, clip.duration) as f32;
+        }
+    }
 }
 
 /// A chain as the inspector's stack draws it: one row per link, and one per
@@ -1535,6 +1566,12 @@ fn chain_rows(
                 .into(),
             on: entry.enabled,
             known: package.is_some(),
+            // Filled by the caller, which knows the clip; see
+            // `span_fields`.
+            spanned: false,
+            span_from: 0.0,
+            span_to: 0.0,
+            span_max: 0.0,
         });
         let Some(package) = package else { continue };
         // The adjust link shows as a link - it can be bypassed or removed
@@ -3497,6 +3534,51 @@ impl Studio {
                 return false;
             };
             entry.enabled = !entry.enabled;
+            true
+        });
+    }
+
+    /// Limits link `index` of the picture chain to part of the clip - two
+    /// seconds from the playhead - or hands it back the whole clip.
+    pub fn chain_span_toggle(&mut self, index: i32) {
+        let Some(clip) = self.sole_selection().and_then(|id| self.clip(&id).cloned()) else {
+            return;
+        };
+        let min = 1.0 / f64::from(self.frame_rate().max(1.0));
+        let fresh = span_fresh(&clip, f64::from(self.playhead), min);
+        self.chain_edit(false, |chain| {
+            let Some(link) = usize::try_from(index).ok().and_then(|i| chain.get_mut(i)) else {
+                return false;
+            };
+            link.span = match link.span {
+                Some(_) => None,
+                None => Some(fresh),
+            };
+            true
+        });
+    }
+
+    /// Link `index`'s span from typed times, in seconds into the clip:
+    /// inside it, and at least a frame long.
+    pub fn chain_span_set(&mut self, index: i32, from: f32, to: f32) {
+        let Some(clip) = self.sole_selection().and_then(|id| self.clip(&id).cloned()) else {
+            return;
+        };
+        let min = 1.0 / f64::from(self.frame_rate().max(1.0));
+        let from = f64::from(from).clamp(0.0, (clip.duration - min).max(0.0));
+        let to = f64::from(to).clamp(from + min, clip.duration.max(from + min));
+        let span = model::Span {
+            from: clip.source_at(from),
+            to: clip.source_at(to),
+        };
+        self.chain_edit(false, |chain| {
+            let Some(link) = usize::try_from(index).ok().and_then(|i| chain.get_mut(i)) else {
+                return false;
+            };
+            if link.span == Some(span) {
+                return false;
+            }
+            link.span = Some(span);
             true
         });
     }
@@ -7198,7 +7280,9 @@ impl Studio {
             match self.sole_selection().and_then(|id| self.clip(&id)) {
                 Some(clip) => {
                     let inside = self.key_point().map(|(_, at)| at);
-                    let (visual, visual_params) = chain_rows(&clip.video_effects, Some(inside));
+                    let (mut visual, visual_params) =
+                        chain_rows(&clip.video_effects, Some(inside));
+                    span_fields(&mut visual, clip);
                     let (sound, sound_params) = chain_rows(&clip.filters, None);
                     (visual, visual_params, sound, sound_params)
                 }
@@ -9525,9 +9609,26 @@ mod tests {
     use super::{
         Command, Footprint, Studio, adjust_key_names, chain_colours, chain_rows, custom_frame,
         custom_rate, fps_of, grading_rows, home_folder, key_commands, link_key_names, link_param,
-        link_param_name, packed, param_link, place_in, shown, span_offsets_dragged, span_rows,
-        wheel_partners, write_keyable, write_link_param,
+        link_param_name, packed, param_link, place_in, shown, span_fresh, span_offsets_dragged,
+        span_rows, wheel_partners, write_keyable, write_link_param,
     };
+
+    #[test]
+    fn a_fresh_span_starts_at_the_playhead_for_two_seconds_inside_the_clip() {
+        use concat_project::model::{Clip, Span};
+        let mut clip = Clip::default();
+        clip.start = 10.0;
+        clip.duration = 5.0;
+        clip.source_start = 1.0;
+        assert_eq!(span_fresh(&clip, 11.0, 0.1), Span { from: 2.0, to: 4.0 });
+        // Near the tail it backs up to keep its two seconds.
+        assert_eq!(span_fresh(&clip, 14.5, 0.1), Span { from: 4.0, to: 6.0 });
+        // Off the clip, from its head.
+        assert_eq!(span_fresh(&clip, 3.0, 0.1), Span { from: 1.0, to: 3.0 });
+        // A clip shorter than two seconds is covered whole.
+        clip.duration = 1.0;
+        assert_eq!(span_fresh(&clip, 10.5, 0.1), Span { from: 1.0, to: 2.0 });
+    }
 
     #[test]
     fn a_span_drag_is_clamped_to_the_clip_and_a_frame() {

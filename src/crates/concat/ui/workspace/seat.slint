@@ -242,6 +242,8 @@ export component Seat inherits Rectangle {
             chain-set-param(audio, index, key, value) => {
                 Editor.chain-set-param(audio, index, key, value);
             }
+            chain-span-toggle(index) => { Editor.chain-span-toggle(index); }
+            chain-span-set(index, from, to) => { Editor.chain-span-set(index, from, to); }
             brush-tool: Editor.brush-tool;
             brush-size: Editor.brush-size;
             painting: Editor.painting;

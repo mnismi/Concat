@@ -1024,6 +1024,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
     editor.on_chain_remove(on_window!(|state, audio: bool, index: i32| {
         state.chain_remove(audio, index);
     }));
+    editor.on_chain_span_toggle(on_lanes!(|state, index: i32| {
+        state.chain_span_toggle(index);
+    }));
+    editor.on_chain_span_set(on_lanes!(|state, index: i32, from: f32, to: f32| {
+        state.chain_span_set(index, from, to);
+    }));
     editor.on_chain_set_param(on_lanes!(
         |state, audio: bool, index: i32, key: SharedString, value: f32| {
             state.chain_set_param(audio, index, key.as_str(), value);

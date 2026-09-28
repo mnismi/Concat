@@ -178,6 +178,8 @@ export component ConfigPane inherits Rectangle {
     callback chain-move-by(audio: bool, index: int, delta: int);
     callback chain-remove(audio: bool, index: int);
     callback chain-set-param(audio: bool, index: int, key: string, value: float);
+    callback chain-span-toggle(index: int);
+    callback chain-span-set(index: int, from: float, to: float);
 
     callback clip-set(field: ClipField, value: float);
     callback clip-set-text(field: ClipTextField, value: string);
@@ -653,7 +655,12 @@ export component ConfigPane inherits Rectangle {
                     wheel-groups: root.visual-wheels;
                     curve-groups: root.visual-curves;
                     colours: root.visual-colours;
+                    // A layer already runs for as long as it lasts on the
+                    // lanes; only a clip's effects take a part of it.
+                    spans: !root.is-layer;
 
+                    span-toggle(index) => { root.chain-span-toggle(index); }
+                    span-set(index, from, to) => { root.chain-span-set(index, from, to); }
                     add(id) => { root.chain-add(false, id); }
                     toggle(index) => { root.chain-toggle(false, index); }
                     move-by(index, delta) => { root.chain-move-by(false, index, delta); }
