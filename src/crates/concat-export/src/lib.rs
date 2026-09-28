@@ -26,6 +26,7 @@ mod resolve;
 
 use resolve::{BuiltTimeline, TransitionSpan, Treatment, animation_of, build_timeline, quantise};
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1352,10 +1353,29 @@ fn passes_at(
     let Some(effects) = chains.get(&clip) else {
         return Vec::new();
     };
-    let at = timeline
-        .clip(clip)
-        .map_or(0.0, |engine_clip| engine_clip.fraction_at(time));
-    Catalogue::builtin().shader_passes_at(effects, at, reveal_maps.get(&clip).cloned())
+    let engine_clip = timeline.clip(clip);
+    let at = engine_clip.map_or(0.0, |engine_clip| engine_clip.fraction_at(time));
+    let source = engine_clip
+        .and_then(|engine_clip| engine_clip.source_time_at(time))
+        .map(|source| source.as_f64());
+    let live = live_links(effects, source);
+    Catalogue::builtin().shader_passes_at(&live, at, reveal_maps.get(&clip).cloned())
+}
+
+/// The links of `effects` that play at `source`, the frame's instant of
+/// the media: a link with a span sits out the rest of the clip. Borrowed
+/// when nothing is spanned, which is nearly every chain.
+fn live_links(effects: &[AppliedFilter], source: Option<f64>) -> Cow<'_, [AppliedFilter]> {
+    match source {
+        Some(source) if effects.iter().any(|link| link.span.is_some()) => Cow::Owned(
+            effects
+                .iter()
+                .filter(|link| link.live_at(source))
+                .cloned()
+                .collect(),
+        ),
+        _ => Cow::Borrowed(effects),
+    }
 }
 
 /// Draws `plan` with every treatment live at its instant applied to the
@@ -1988,6 +2008,36 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_spanned_effect_is_resolved_only_inside_its_span() {
+        let mut link = AppliedFilter::new("concat.mono");
+        link.span = Some(concat_project::model::Span { from: 4.0, to: 6.0 });
+        let chain = vec![link, AppliedFilter::new("concat.vignette")];
+        assert_eq!(live_links(&chain, Some(3.0)).len(), 1);
+        assert_eq!(live_links(&chain, Some(5.0)).len(), 2);
+        assert_eq!(live_links(&chain, Some(6.0)).len(), 1);
+        // No source time (off the clip) keeps the whole chain, as before.
+        assert_eq!(live_links(&chain, None).len(), 2);
+    }
+
+    #[test]
+    fn a_span_follows_a_sped_up_clip() {
+        let mut timeline = Timeline::new(64, 64, FrameRate::THIRTY);
+        let track = timeline.add_track(Track::new("T0", TrackKind::Video));
+        let mut engine_clip = Clip::new(MediaRef::new("a.mp4"), Rational::ZERO, Rational::from(10));
+        engine_clip.speed = Rational::from(2);
+        let id = timeline.add_clip(track, engine_clip).expect("adds");
+        let mut link = AppliedFilter::new("concat.mono");
+        // Source 4..6 s is timeline 2..3 s at double speed.
+        link.span = Some(concat_project::model::Span { from: 4.0, to: 6.0 });
+        let chains = HashMap::from([(id, vec![link])]);
+        let at = |seconds: i64| {
+            passes_at(&chains, &HashMap::new(), &timeline, id, Rational::from(seconds)).len()
+        };
+        assert_eq!(at(1), 0);
+        assert_eq!((at(2), at(3)), (1, 0));
+    }
 
     fn clip(kind: &str, track: usize, start: f64, duration: f64, source_start: f64) -> ExportClip {
         let kind_of = match kind {
