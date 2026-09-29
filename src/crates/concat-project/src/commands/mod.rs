@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::model::{
     AppliedFilter, AudioTrack, Clip, ClipAnimation, ClipKind, ColorRange, ColorSpace, Crop,
     CustomFont, Cutout, CutoutMode, KeyEase, KeyProperty, MIN_ANIMATION, MediaItem, MediaKind,
-    MediaOrigin, Project, SpeedPoint, Stroke, TextStyle, Timeline, Track, Transition,
+    MediaOrigin, Piece, Project, SpeedPoint, Stroke, TextStyle, Timeline, Track, Transition,
     VideoSettings,
 };
 
@@ -26,6 +26,7 @@ mod cut;
 pub use clips::why_not_merge;
 pub use cut::cut_group;
 mod media;
+mod pieces;
 mod properties;
 mod timelines;
 mod tracks;
@@ -584,6 +585,55 @@ pub enum Command {
         /// The preset and its length; None removes it.
         animation: Option<ClipAnimation>,
     },
+    /// Adds a piece, and the bin items and fonts it uses, to the project if
+    /// they are not there yet, then places one clip of it at `start`: on
+    /// `track_id`, or the lowest lane free for its length when None. Bin
+    /// items and fonts are matched by path, a new item is minted an "m" id
+    /// and hidden from the bin, and the piece's clips are pointed at the
+    /// project's ids. The piece is then matched by content, so the same
+    /// piece dropped twice is stored once; a new one is minted a "p" id.
+    InsertPiece {
+        /// The piece; its id is ignored.
+        piece: Piece,
+        /// The bin items its clips name, by their ids inside `piece`.
+        #[serde(default)]
+        media: Vec<MediaItem>,
+        /// Fonts its titles use.
+        #[serde(default)]
+        fonts: Vec<CustomFont>,
+        /// The lane; None for the first free one.
+        #[serde(default)]
+        track_id: Option<String>,
+        /// Timeline position in seconds, floored at 0.
+        start: f64,
+    },
+    /// Places one more clip of a piece the project already holds, at its
+    /// saved length. What duplicate and paste use.
+    PlacePiece {
+        /// The piece to place.
+        piece_id: String,
+        /// The lane; None for the first free one.
+        #[serde(default)]
+        track_id: Option<String>,
+        /// Timeline position in seconds, floored at 0.
+        start: f64,
+    },
+    /// Gives one title inside a placed piece new words, or its saved words
+    /// back (None).
+    SetPieceText {
+        /// The piece clip.
+        clip_id: String,
+        /// The title's id inside the piece.
+        inner_clip_id: String,
+        /// The words; None restores the saved ones.
+        text: Option<String>,
+    },
+    /// Replaces a piece clip with the clips it plays, as ordinary clips on
+    /// new lanes above its own - what to do to edit its inside.
+    UnpackPiece {
+        /// The piece clip.
+        clip_id: String,
+    },
     /// Applies a [`ClipPatch`]: only the fields present change, with the
     /// clamps documented on the patch. An unknown clip is a no-op.
     UpdateClip {
@@ -801,6 +851,14 @@ pub enum CommandError {
     /// [`Command::SetClipAnimation`] on a sound or a layer.
     #[error("Only a video, a still or a title can be animated.")]
     CannotAnimate,
+    /// A piece command named a piece the project does not hold.
+    #[error("That piece is no longer in the project.")]
+    PieceGone,
+    /// An edit that would change the inside of a placed piece.
+    #[error(
+        "A piece can only be moved, turned, resized, stretched or retitled. Unpack it to change the rest."
+    )]
+    PieceIsSealed,
 }
 
 /// Mints ids. Owned by the editor so restored projects advance it past every
@@ -1024,6 +1082,8 @@ impl Command {
                 .into_iter()
                 .flatten()
                 .copied()),
+            Command::InsertPiece { start, piece, .. } => bad([*start, piece.duration]),
+            Command::PlacePiece { start, .. } => bad([*start]),
             _ => false,
         }
     }
@@ -1042,6 +1102,48 @@ fn assign<T: PartialEq>(slot: &mut T, value: T) -> bool {
     }
 }
 
+impl ClipPatch {
+    /// True when the patch only renames - the one patch a sealed piece
+    /// takes.
+    pub fn is_rename_only(&self) -> bool {
+        ClipPatch {
+            name: None,
+            ..self.clone()
+        } == ClipPatch::default()
+    }
+}
+
+/// Whether `command` would change the inside of a placed piece on the
+/// active timeline - the edits a piece refuses. See the spec's list.
+fn opens_a_piece(project: &Project, command: &Command) -> bool {
+    let piece = |id: &str| {
+        project
+            .active()
+            .clip(id)
+            .is_some_and(|clip| clip.kind == ClipKind::Piece)
+    };
+    match command {
+        Command::UpdateClip { clip_id, patch } => piece(clip_id) && !patch.is_rename_only(),
+        Command::SetClipAnimation { clip_id, .. }
+        | Command::SetClipSpeed { clip_id, .. }
+        | Command::SetClipSpeedCurve { clip_id, .. }
+        | Command::SetClipCutout { clip_id, .. }
+        | Command::AddCutoutStroke { clip_id, .. }
+        | Command::SetClipKey { clip_id, .. }
+        | Command::ClearClipKey { clip_id, .. }
+        | Command::ClearClipKeys { clip_id, .. }
+        | Command::SetEffectKey { clip_id, .. }
+        | Command::ClearEffectKey { clip_id, .. }
+        | Command::ClearEffectKeys { clip_id, .. }
+        | Command::ReplaceClipMedia { clip_id, .. }
+        | Command::FreezeFrame { clip_id, .. }
+        | Command::RemoveClipRanges { clip_id, .. }
+        | Command::DetachAudio { clip_id } => piece(clip_id),
+        Command::MergeClips { clip_ids } => clip_ids.iter().any(|id| piece(id)),
+        _ => false,
+    }
+}
+
 /// Applies one command. Errors are [`CommandError`]s, each rendering as a
 /// user-meaningful sentence; a command that legitimately does nothing (a
 /// no-op rename, an out-of-range split) returns Ok with no created id and
@@ -1053,6 +1155,9 @@ pub fn apply(
 ) -> Result<Outcome, CommandError> {
     if command.has_non_finite() {
         return Err(CommandError::NotANumber);
+    }
+    if opens_a_piece(project, &command) {
+        return Err(CommandError::PieceIsSealed);
     }
     match command {
         Command::Batch { commands } => {
@@ -1109,6 +1214,10 @@ pub fn apply(
         | Command::ClearEffectKeys { .. }
         | Command::SetClipSpeedCurve { .. }
         | Command::SetClipTransform { .. }) => properties::apply(project, mint, command),
+        command @ (Command::InsertPiece { .. }
+        | Command::PlacePiece { .. }
+        | Command::SetPieceText { .. }
+        | Command::UnpackPiece { .. }) => pieces::apply(project, mint, command),
         command @ (Command::DetachAudio { .. } | Command::ReattachAudio { .. }) => {
             audio::apply(project, mint, command)
         }

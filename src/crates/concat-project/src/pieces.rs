@@ -1203,4 +1203,256 @@ mod tests {
             SelectionError::Slot
         );
     }
+
+    use crate::commands::{Command, CommandError, TrimEdge};
+
+    fn inserted() -> (crate::Editor, String) {
+        let (mut editor, ids) = editor_with_a_hand_and_a_title();
+        let made = from_selection(editor.project(), &ids, "Point").expect("saves");
+        let clip = editor
+            .apply(Command::InsertPiece {
+                piece: made.piece,
+                media: made.media,
+                fonts: made.fonts,
+                track_id: Some("T4".to_owned()),
+                start: 20.0,
+            })
+            .expect("places")
+            .created_id
+            .expect("clip id");
+        (editor, clip)
+    }
+
+    #[test]
+    fn inserting_the_same_piece_twice_stores_it_once() {
+        let (mut editor, _) = inserted();
+        let piece = editor.project().pieces[0].clone();
+        let media = editor.project().media.clone();
+        editor
+            .apply(Command::InsertPiece {
+                piece: Piece {
+                    id: String::new(),
+                    ..piece
+                },
+                media,
+                fonts: Vec::new(),
+                track_id: None,
+                start: 40.0,
+            })
+            .expect("places");
+        assert_eq!(editor.project().pieces.len(), 1);
+        assert_eq!(editor.project().media.len(), 1, "same path, same bin item");
+        let placed = editor
+            .project()
+            .active()
+            .clips
+            .iter()
+            .filter(|clip| clip.kind == ClipKind::Piece)
+            .count();
+        assert_eq!(placed, 2);
+    }
+
+    #[test]
+    fn a_new_bin_item_from_a_piece_is_hidden_and_the_piece_points_at_it() {
+        let (mut editor, _) = inserted();
+        let mut media = image("m-lib", 200, 200);
+        media.path = "/library/other.png".to_owned();
+        let piece = piece("lib", vec![vec![hand("h", "m-lib")]]);
+        editor
+            .apply(Command::InsertPiece {
+                piece,
+                media: vec![media],
+                fonts: Vec::new(),
+                track_id: None,
+                start: 0.0,
+            })
+            .expect("places");
+        let project = editor.project();
+        let added = project
+            .media
+            .iter()
+            .find(|item| item.path == "/library/other.png")
+            .expect("added");
+        assert!(added.piece_media);
+        assert_ne!(added.id, "m-lib", "minted fresh");
+        assert_eq!(project.pieces[1].lanes[0].clips[0].media_id, added.id);
+        assert!(project.pieces[1].id.starts_with('p'));
+    }
+
+    #[test]
+    fn retitling_and_unpacking_are_one_undo_each() {
+        let (mut editor, clip) = inserted();
+        let inner = editor.project().pieces[0].lanes[1].clips[0].id.clone();
+        editor
+            .apply(Command::SetPieceText {
+                clip_id: clip.clone(),
+                inner_clip_id: inner.clone(),
+                text: Some("Look".to_owned()),
+            })
+            .expect("retitles");
+        let placement = editor
+            .project()
+            .active()
+            .clip(&clip)
+            .expect("there")
+            .piece
+            .clone();
+        assert_eq!(placement.expect("placement").texts[&inner], "Look");
+
+        editor
+            .apply(Command::UnpackPiece {
+                clip_id: clip.clone(),
+            })
+            .expect("unpacks");
+        let timeline = editor.project().active();
+        assert!(timeline.clip(&clip).is_none());
+        let words = timeline
+            .clips
+            .iter()
+            .find(|clip| clip.kind == ClipKind::Text && clip.start >= 20.0)
+            .expect("the title is ordinary now");
+        assert_eq!(words.text.as_ref().expect("text").content, "Look");
+        assert!(!words.id.contains('/'), "minted, not the render id");
+        assert!(timeline.track(&words.track_id).is_some(), "on a real lane");
+        editor.undo();
+        assert!(editor.project().active().clip(&clip).is_some());
+    }
+
+    #[test]
+    fn a_piece_refuses_inside_edits() {
+        let (mut editor, clip) = inserted();
+        for command in [
+            Command::SetClipSpeed {
+                clip_id: clip.clone(),
+                speed: 2.0,
+            },
+            Command::SetClipKey {
+                clip_id: clip.clone(),
+                property: KeyProperty::Opacity,
+                at: 0.5,
+                value: 0.5,
+                ease: KeyEase::LINEAR,
+            },
+            Command::UpdateClip {
+                clip_id: clip.clone(),
+                patch: crate::commands::ClipPatch {
+                    volume: Some(0.0),
+                    ..Default::default()
+                },
+            },
+        ] {
+            assert_eq!(editor.apply(command), Err(CommandError::PieceIsSealed));
+        }
+        editor
+            .apply(Command::UpdateClip {
+                clip_id: clip.clone(),
+                patch: crate::commands::ClipPatch {
+                    name: Some("Mine".to_owned()),
+                    ..Default::default()
+                },
+            })
+            .expect("a rename is fine");
+        editor
+            .apply(Command::SetClipTransform {
+                clip_id: clip,
+                scale: Some(0.5),
+                offset_x: Some(0.2),
+                offset_y: None,
+                rotation: Some(15.0),
+                stretch_x: None,
+                stretch_y: None,
+            })
+            .expect("a transform is fine");
+    }
+
+    #[test]
+    fn a_split_passes_over_a_piece() {
+        let (mut editor, clip) = inserted();
+        let outcome = editor
+            .apply(Command::SplitClips {
+                clip_ids: vec![clip],
+                time: 22.0,
+            })
+            .expect("tolerated");
+        assert!(!outcome.applied);
+    }
+
+    #[test]
+    fn a_piece_trims_only_its_tail_and_only_within_its_range() {
+        let (mut editor, ids) = editor_with_a_hand_and_a_title();
+        let mut made = from_selection(editor.project(), &ids, "Point").expect("saves");
+        made.piece.hold = Some(Hold { from: 1.5, to: 3.0 });
+        let clip = editor
+            .apply(Command::InsertPiece {
+                piece: made.piece,
+                media: made.media,
+                fonts: made.fonts,
+                track_id: Some("T4".to_owned()),
+                start: 20.0,
+            })
+            .expect("places")
+            .created_id
+            .expect("id");
+        let trim = |editor: &mut crate::Editor, edge, delta| {
+            editor
+                .apply(Command::TrimClip {
+                    clip_id: clip.clone(),
+                    edge,
+                    delta,
+                    ripple: false,
+                })
+                .expect("trims")
+        };
+        assert!(!trim(&mut editor, TrimEdge::Start, 1.0).applied);
+        trim(&mut editor, TrimEdge::End, -10.0);
+        let placed = editor
+            .project()
+            .active()
+            .clip(&clip)
+            .expect("there")
+            .clone();
+        assert!(close(placed.duration, 3.5), "5 s less the 1.5 s hold");
+        trim(&mut editor, TrimEdge::End, 100.0);
+        let placed = editor
+            .project()
+            .active()
+            .clip(&clip)
+            .expect("there")
+            .clone();
+        assert!(close(placed.duration, 103.5), "stills grow without limit");
+    }
+
+    #[test]
+    fn a_piece_in_the_selection_is_opened_up() {
+        let (mut editor, ids) = editor_with_a_hand_and_a_title();
+        let inner = from_selection(editor.project(), &ids, "Point").expect("saves");
+        editor
+            .apply(crate::commands::Command::InsertPiece {
+                piece: inner.piece,
+                media: inner.media,
+                fonts: inner.fonts,
+                track_id: Some("T4".to_owned()),
+                start: 20.0,
+            })
+            .expect("places");
+        let placed = editor
+            .project()
+            .active()
+            .clips
+            .iter()
+            .find(|clip| clip.kind == ClipKind::Piece)
+            .expect("placed")
+            .id
+            .clone();
+        let outer = from_selection(editor.project(), &[placed], "Again").expect("saves");
+        assert!(
+            outer
+                .piece
+                .lanes
+                .iter()
+                .flat_map(|lane| &lane.clips)
+                .all(|clip| clip.kind != ClipKind::Piece)
+        );
+        assert_eq!(outer.piece.lanes.len(), 2);
+    }
 }

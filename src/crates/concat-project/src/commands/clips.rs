@@ -181,6 +181,21 @@ pub(super) fn apply(
             delta,
             ripple,
         } => {
+            // A piece trims only its tail, and only as far as its hold
+            // squeezes or its footage lasts.
+            let range = project
+                .active()
+                .clip(&clip_id)
+                .and_then(|clip| clip.piece.as_ref())
+                .and_then(|placement| project.piece(&placement.piece_id))
+                .map(|piece| piece.length_range(&project.media));
+            let is_piece = project
+                .active()
+                .clip(&clip_id)
+                .is_some_and(|clip| clip.kind == ClipKind::Piece);
+            if is_piece && (edge == TrimEdge::Start || range.is_none()) {
+                return Ok(Outcome::default());
+            }
             let timeline = project.active_mut();
             let Some(clip) = timeline.clip_mut(&clip_id) else {
                 return Ok(Outcome::default());
@@ -193,7 +208,10 @@ pub(super) fn apply(
             // move, `behind` where "later" begins.
             let (applied, by, behind) = match edge {
                 TrimEdge::End => {
-                    let duration = (clip.duration + delta).max(MIN_CLIP_DURATION);
+                    let mut duration = (clip.duration + delta).max(MIN_CLIP_DURATION);
+                    if let Some((shortest, longest)) = range {
+                        duration = duration.clamp(shortest, longest);
+                    }
                     let old = clip.duration;
                     let applied = assign(&mut clip.duration, duration);
                     if applied {
@@ -257,6 +275,9 @@ pub(super) fn apply(
                 let Some(index) = timeline.clips.iter().position(|clip| clip.id == clip_id) else {
                     continue;
                 };
+                if timeline.clips[index].kind == ClipKind::Piece {
+                    continue;
+                }
                 {
                     // A curve does not survive a cut in halves: the map from
                     // here to the source is not affine, so both halves go to
@@ -667,7 +688,7 @@ fn ripple_room_for(timeline: &mut Timeline, track_id: &str, start: f64, media: &
 
 /// The lowest track with nothing occupying `[start, start + duration)`,
 /// falling back to the bottom track.
-fn first_free_track(timeline: &Timeline, start: f64, duration: f64) -> Option<String> {
+pub(super) fn first_free_track(timeline: &Timeline, start: f64, duration: f64) -> Option<String> {
     let end = start + duration;
     timeline
         .tracks
