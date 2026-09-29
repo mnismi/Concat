@@ -975,5 +975,21 @@
   "tray.turnOffPreviewAxis": "Disattiva l'asse di anteprima (S)",
   "tray.turnOnPreviewAxis": "Attiva l'asse di anteprima (S)",
   "tray.undo": "Annulla (⌘Z)",
-  "tray.zoomToFit": "Adatta alla vista"
+  "tray.zoomToFit": "Adatta alla vista",
+  "tray.removeSilences": "Rimuovi silenzi",
+  "silence.detection": "Rilevamento",
+  "silence.silenceLevel": "Livello di silenzio",
+  "silence.minimumPause": "Pausa minima",
+  "silence.padding": "Margine",
+  "silence.summary": "{0} pause · rimuove {1} · {2} → {3}",
+  "silence.noPausesFound": "Nessuna pausa trovata a questo livello",
+  "silence.wholeClipBelowLevel": "L'intera clip è sotto questo livello",
+  "silence.clipsSkipped": "{0} clip saltate: {1}",
+  "silence.reasonNoSound": "nessun suono",
+  "silence.reasonSpeedCurve": "la sua velocità cambia nel tempo",
+  "silence.reasonLoading": "il suono è ancora in lettura",
+  "silence.selectClipWithSound": "Seleziona una clip con audio per rimuoverne i silenzi",
+  "silence.cannotRemove": "Impossibile rimuovere i silenzi: {0}",
+  "silence.removePauses": "Rimuovi pause",
+  "silence.removedPauses": "Rimosse {0} pause ({1})"
 }

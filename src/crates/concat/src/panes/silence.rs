@@ -16,6 +16,12 @@ use std::sync::Arc;
 use concat_media::Pyramid;
 use concat_media::silence::{SilenceSettings, find_silences};
 use concat_project::Command;
+use concat_project::model::Clip;
+
+use crate::i18n::{t, tf};
+use crate::prefs::Preferences;
+use crate::studio::Studio;
+use crate::ui::SilenceSheetData;
 
 /// Why a selected clip is left out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,6 +162,254 @@ pub fn leaders(clips: &[(String, Option<String>)], selection: &[String]) -> Vec<
         }
     }
     out
+}
+
+/// Everything that can happen to the Remove Silences sheet.
+#[derive(Clone, Debug)]
+pub enum SilenceMsg {
+    /// The tray's Remove Silences tool.
+    Open,
+    Close,
+    LevelChanged(f32),
+    MinPauseChanged(f32),
+    PaddingChanged(f32),
+    /// A waveform arrived: read the pauses again.
+    Refresh,
+    Apply,
+}
+
+/// The Remove Silences sheet's state.
+#[derive(Default)]
+pub struct SilencePane {
+    pub open: bool,
+    pub settings: SilenceSettings,
+    /// The selection when the sheet opened: what it works on.
+    selection: Vec<String>,
+    plan: Plan,
+}
+
+impl SilencePane {
+    /// Applies one message. The studio is the rest of the window; while
+    /// this runs the studio's copy of the pane is a blank it must not read.
+    pub fn update(&mut self, msg: SilenceMsg, studio: &mut Studio) {
+        match msg {
+            SilenceMsg::Open => {
+                self.open = true;
+                self.selection = studio.selection.clone();
+                self.settings = remembered(&studio.prefs);
+                self.refresh(studio);
+            }
+            SilenceMsg::Close => {
+                self.close(studio);
+            }
+            SilenceMsg::LevelChanged(db) => {
+                self.settings.level_db = db.clamp(-60.0, -20.0);
+                self.refresh(studio);
+            }
+            SilenceMsg::MinPauseChanged(seconds) => {
+                self.settings.min_pause = f64::from(seconds).clamp(0.1, 3.0);
+                self.refresh(studio);
+            }
+            SilenceMsg::PaddingChanged(seconds) => {
+                self.settings.padding = f64::from(seconds).clamp(0.0, 0.5);
+                self.refresh(studio);
+            }
+            SilenceMsg::Refresh => {
+                if self.open {
+                    self.refresh(studio);
+                }
+            }
+            SilenceMsg::Apply => {
+                if !self.ready() {
+                    return;
+                }
+                let commands = std::mem::take(&mut self.plan.commands);
+                let (pauses, removed) = (self.plan.pauses, self.plan.removed);
+                self.close(studio);
+                studio.apply(Command::Batch { commands });
+                // A leading pause takes its clip's head, id and all.
+                let alive: Vec<String> = studio
+                    .selection
+                    .iter()
+                    .filter(|id| studio.clip(id).is_some())
+                    .cloned()
+                    .collect();
+                studio.selection = alive;
+                studio.notify(&tf("silence.removedPauses", &[&pauses, &clock(removed)]), false);
+            }
+        }
+    }
+
+    /// The shading the lanes draw while the sheet is open.
+    pub fn shades(&self) -> Vec<(i32, f64, f64)> {
+        if self.open {
+            self.plan.shades.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The sheet as Slint shows it.
+    pub fn data(&self) -> SilenceSheetData {
+        let plan = &self.plan;
+        let summary = if plan.whole {
+            t("silence.wholeClipBelowLevel")
+        } else if plan.before == 0.0 {
+            plan.skipped.first().map(|skip| reason(*skip)).unwrap_or_default()
+        } else if plan.commands.is_empty() {
+            t("silence.noPausesFound")
+        } else {
+            tf(
+                "silence.summary",
+                &[
+                    &plan.pauses,
+                    &clock(plan.removed),
+                    &clock(plan.before),
+                    &clock(plan.before - plan.removed),
+                ],
+            )
+        };
+        let skipped = match plan.skipped.first() {
+            Some(skip) if plan.before > 0.0 => {
+                tf("silence.clipsSkipped", &[&plan.skipped.len(), &reason(*skip)])
+            }
+            _ => String::new(),
+        };
+        SilenceSheetData {
+            open: self.open,
+            level: self.settings.level_db,
+            min_pause: self.settings.min_pause as f32,
+            padding: self.settings.padding as f32,
+            summary: summary.into(),
+            skipped: skipped.into(),
+            ready: self.ready(),
+        }
+    }
+
+    fn ready(&self) -> bool {
+        !self.plan.commands.is_empty() && !self.plan.whole
+    }
+
+    fn refresh(&mut self, studio: &Studio) {
+        self.plan = plan(&subjects(studio, &self.selection), &self.settings);
+    }
+
+    fn close(&mut self, studio: &mut Studio) {
+        if self.open {
+            remember(&mut studio.prefs, &self.settings);
+            studio.prefs.save(&studio.host.dirs);
+        }
+        self.open = false;
+        self.plan = Plan::default();
+    }
+}
+
+/// Why the tray's button is off for this selection, or None when it can
+/// open. A waveform still loading does not keep it shut: the sheet says
+/// so and fills in when it arrives.
+pub fn blocked(studio: &Studio) -> Option<String> {
+    if studio.selection.is_empty() {
+        return Some(t("silence.selectClipWithSound"));
+    }
+    let subjects = subjects(studio, &studio.selection);
+    if subjects
+        .iter()
+        .any(|subject| !matches!(subject.peaks, Err(Skip::NoSound | Skip::SpeedCurve)))
+    {
+        return None;
+    }
+    let skip = if subjects
+        .iter()
+        .any(|subject| matches!(subject.peaks, Err(Skip::SpeedCurve)))
+    {
+        Skip::SpeedCurve
+    } else {
+        Skip::NoSound
+    };
+    Some(tf("silence.cannotRemove", &[&reason(skip)]))
+}
+
+/// The selection as subjects: one per video-and-sound group.
+fn subjects(studio: &Studio, selection: &[String]) -> Vec<Subject> {
+    let timeline = studio.timeline();
+    let links: Vec<(String, Option<String>)> = timeline
+        .clips
+        .iter()
+        .map(|clip| (clip.id.clone(), clip.detached_from.clone()))
+        .collect();
+    leaders(&links, selection)
+        .into_iter()
+        .filter_map(|leader| {
+            let group: Vec<&Clip> = timeline
+                .clips
+                .iter()
+                .map(|clip| clip.as_ref())
+                .filter(|clip| {
+                    clip.id == leader || clip.detached_from.as_deref() == Some(leader.as_str())
+                })
+                .collect();
+            let place = |clip: &Clip| Placement {
+                row: studio.row_of(&clip.track_id),
+                start: clip.start,
+                duration: clip.duration,
+                source_start: clip.source_start,
+                speed: clip.speed,
+            };
+            // The video's own sound unless it was detached, then the first
+            // detached sound, then anything in the group with sound.
+            let heard = group
+                .iter()
+                .copied()
+                .find(|clip| clip.id == leader && clip.muted != Some(true) && studio.clip_has_sound(clip))
+                .or_else(|| group.iter().copied().find(|clip| clip.detached_from.is_some()))
+                .or_else(|| group.iter().copied().find(|clip| studio.clip_has_sound(clip)));
+            let first = *group.first()?;
+            let Some(heard) = heard else {
+                return Some(Subject {
+                    clip_id: leader.clone(),
+                    heard: place(first),
+                    members: Vec::new(),
+                    peaks: Err(Skip::NoSound),
+                });
+            };
+            let peaks = if group.iter().any(|clip| clip.speed_curve.is_some()) {
+                Err(Skip::SpeedCurve)
+            } else {
+                studio.peaks_of(heard).ok_or(Skip::Loading)
+            };
+            Some(Subject {
+                clip_id: heard.id.clone(),
+                heard: place(heard),
+                members: group.iter().map(|clip| place(clip)).collect(),
+                peaks,
+            })
+        })
+        .collect()
+}
+
+/// A skip's reason, as the summary and the tray say it. Each key is
+/// written out in its own `t` call so `scripts/locales.py` finds it.
+fn reason(skip: Skip) -> String {
+    match skip {
+        Skip::NoSound => t("silence.reasonNoSound"),
+        Skip::SpeedCurve => t("silence.reasonSpeedCurve"),
+        Skip::Loading => t("silence.reasonLoading"),
+    }
+}
+
+fn remembered(prefs: &Preferences) -> SilenceSettings {
+    let defaults = SilenceSettings::default();
+    SilenceSettings {
+        level_db: prefs.silence_level_db.unwrap_or(defaults.level_db),
+        min_pause: prefs.silence_min_pause.unwrap_or(defaults.min_pause),
+        padding: prefs.silence_padding.unwrap_or(defaults.padding),
+    }
+}
+
+fn remember(prefs: &mut Preferences, settings: &SilenceSettings) {
+    prefs.silence_level_db = Some(settings.level_db);
+    prefs.silence_min_pause = Some(settings.min_pause);
+    prefs.silence_padding = Some(settings.padding);
 }
 
 #[cfg(test)]

@@ -975,5 +975,21 @@
   "tray.turnOffPreviewAxis": "Önizleme eksenini kapat (S)",
   "tray.turnOnPreviewAxis": "Önizleme eksenini aç (S)",
   "tray.undo": "Geri al (⌘Z)",
-  "tray.zoomToFit": "Sığdır"
+  "tray.zoomToFit": "Sığdır",
+  "tray.removeSilences": "Sessizlikleri kaldır",
+  "silence.detection": "Algılama",
+  "silence.silenceLevel": "Sessizlik düzeyi",
+  "silence.minimumPause": "En kısa duraklama",
+  "silence.padding": "Pay",
+  "silence.summary": "{0} duraklama · {1} kaldırır · {2} → {3}",
+  "silence.noPausesFound": "Bu düzeyde duraklama bulunamadı",
+  "silence.wholeClipBelowLevel": "Klibin tamamı bu düzeyin altında",
+  "silence.clipsSkipped": "{0} klip atlandı: {1}",
+  "silence.reasonNoSound": "ses yok",
+  "silence.reasonSpeedCurve": "hızı zamanla değişiyor",
+  "silence.reasonLoading": "ses hâlâ okunuyor",
+  "silence.selectClipWithSound": "Sessizlikleri kaldırmak için sesli bir klip seçin",
+  "silence.cannotRemove": "Sessizlikler kaldırılamıyor: {0}",
+  "silence.removePauses": "Duraklamaları kaldır",
+  "silence.removedPauses": "{0} duraklama kaldırıldı ({1})"
 }

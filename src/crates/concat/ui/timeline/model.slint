@@ -81,6 +81,14 @@ export struct StripData {
 
 /// One effect on a clip that covers only part of it, as the bar along the
 /// clip's foot draws it. Seconds are into the clip, already clipped to it.
+/// A span the open Remove Silences sheet would take out, as the lanes
+/// shade it. Seconds on the timeline.
+export struct SilenceShadeData {
+    row: int,
+    start: float,
+    length: float,
+}
+
 export struct EffectSpanData {
     /// which link of the picture chain, handed back on a drag
     entry: int,

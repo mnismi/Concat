@@ -975,5 +975,21 @@
   "tray.turnOffPreviewAxis": "Vorschauachse ausschalten (S)",
   "tray.turnOnPreviewAxis": "Vorschauachse einschalten (S)",
   "tray.undo": "Rückgängig (⌘Z)",
-  "tray.zoomToFit": "Einpassen"
+  "tray.zoomToFit": "Einpassen",
+  "tray.removeSilences": "Stille entfernen",
+  "silence.detection": "Erkennung",
+  "silence.silenceLevel": "Stillepegel",
+  "silence.minimumPause": "Minimale Pause",
+  "silence.padding": "Puffer",
+  "silence.summary": "{0} Pausen · entfernt {1} · {2} → {3}",
+  "silence.noPausesFound": "Bei diesem Pegel keine Pausen gefunden",
+  "silence.wholeClipBelowLevel": "Der ganze Clip liegt unter diesem Pegel",
+  "silence.clipsSkipped": "{0} Clips übersprungen: {1}",
+  "silence.reasonNoSound": "kein Ton",
+  "silence.reasonSpeedCurve": "seine Geschwindigkeit ändert sich",
+  "silence.reasonLoading": "der Ton wird noch gelesen",
+  "silence.selectClipWithSound": "Wähle einen Clip mit Ton, um seine Stille zu entfernen",
+  "silence.cannotRemove": "Stille kann nicht entfernt werden: {0}",
+  "silence.removePauses": "Pausen entfernen",
+  "silence.removedPauses": "{0} Pausen entfernt ({1})"
 }

@@ -975,5 +975,21 @@
   "tray.turnOffPreviewAxis": "關閉預覽座標軸 (S)",
   "tray.turnOnPreviewAxis": "打開預覽座標軸 (S)",
   "tray.undo": "復原 (⌘Z)",
-  "tray.zoomToFit": "縮放至符合大小"
+  "tray.zoomToFit": "縮放至符合大小",
+  "tray.removeSilences": "移除靜音",
+  "silence.detection": "偵測",
+  "silence.silenceLevel": "靜音音量",
+  "silence.minimumPause": "最短停頓",
+  "silence.padding": "留白",
+  "silence.summary": "{0} 處停頓 · 移除 {1} · {2} → {3}",
+  "silence.noPausesFound": "在此音量下找不到停頓",
+  "silence.wholeClipBelowLevel": "整個片段都低於此音量",
+  "silence.clipsSkipped": "已略過 {0} 個片段：{1}",
+  "silence.reasonNoSound": "沒有聲音",
+  "silence.reasonSpeedCurve": "其速度隨時間變化",
+  "silence.reasonLoading": "仍在讀取聲音",
+  "silence.selectClipWithSound": "選取一個有聲音的片段以移除其靜音",
+  "silence.cannotRemove": "無法移除靜音：{0}",
+  "silence.removePauses": "移除停頓",
+  "silence.removedPauses": "已移除 {0} 處停頓（{1}）"
 }

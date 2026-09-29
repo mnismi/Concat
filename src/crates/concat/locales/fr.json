@@ -975,5 +975,21 @@
   "tray.turnOffPreviewAxis": "Désactiver l'axe d'aperçu (S)",
   "tray.turnOnPreviewAxis": "Activer l'axe d'aperçu (S)",
   "tray.undo": "Annuler (⌘Z)",
-  "tray.zoomToFit": "Ajuster à la vue"
+  "tray.zoomToFit": "Ajuster à la vue",
+  "tray.removeSilences": "Supprimer les silences",
+  "silence.detection": "Détection",
+  "silence.silenceLevel": "Niveau de silence",
+  "silence.minimumPause": "Pause minimale",
+  "silence.padding": "Marge",
+  "silence.summary": "{0} pauses · retire {1} · {2} → {3}",
+  "silence.noPausesFound": "Aucune pause trouvée à ce niveau",
+  "silence.wholeClipBelowLevel": "Tout le clip est sous ce niveau",
+  "silence.clipsSkipped": "{0} clips ignorés : {1}",
+  "silence.reasonNoSound": "pas de son",
+  "silence.reasonSpeedCurve": "sa vitesse varie dans le temps",
+  "silence.reasonLoading": "le son est encore en cours de lecture",
+  "silence.selectClipWithSound": "Sélectionnez un clip avec du son pour en supprimer les silences",
+  "silence.cannotRemove": "Impossible de supprimer les silences : {0}",
+  "silence.removePauses": "Supprimer les pauses",
+  "silence.removedPauses": "{0} pauses supprimées ({1})"
 }

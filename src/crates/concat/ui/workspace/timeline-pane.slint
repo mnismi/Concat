@@ -10,7 +10,7 @@ import { ContextMenu, MenuItemData, MenuMetrics, MenuRow } from "../primitives/c
 import { HairlineSplitter } from "splitter.slint";
 import { ThinScrollbar } from "../primitives/scrollbar.slint";
 import {
-    ClipData, DropData, TimelineTabData, TimelineTool, TrackData, TrackSize,
+    ClipData, DropData, SilenceShadeData, TimelineTabData, TimelineTool, TrackData, TrackSize,
 } from "../timeline/model.slint";
 import { TimelineTabs } from "../timeline/tabs.slint";
 import { TimelineTray } from "../timeline/tray.slint";
@@ -46,6 +46,8 @@ export component TimelinePane inherits Rectangle {
     in property <bool> can-undo;
     in property <bool> can-redo;
     in property <string> merge-blocked-because;
+    in property <string> silence-blocked-because;
+    in property <[SilenceShadeData]> silence-shades;
     in property <bool> sound-selected;
     in property <bool> title-selected;
     in property <bool> picture-selected;
@@ -74,6 +76,7 @@ export component TimelinePane inherits Rectangle {
     callback merge();
     callback delete-selected();
     callback captions();
+    callback silences();
     callback speak();
     callback add-track();
     callback zoom-to-fit(width: length);
@@ -309,6 +312,7 @@ export component TimelinePane inherits Rectangle {
             can-undo: root.can-undo;
             can-redo: root.can-redo;
             merge-blocked-because: root.merge-blocked-because;
+            silence-blocked-because: root.silence-blocked-because;
             sound-selected: root.sound-selected;
             title-selected: root.title-selected;
             picture-selected: root.picture-selected;
@@ -341,6 +345,7 @@ export component TimelinePane inherits Rectangle {
             merge => { root.merge(); }
             delete-selected => { root.delete-selected(); }
             captions => { root.captions(); }
+            silences => { root.silences(); }
             speak => { root.speak(); }
             add-track => { root.add-track(); }
             fit => { root.zoom-to-fit(lanes.width); }

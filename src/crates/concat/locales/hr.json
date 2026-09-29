@@ -975,5 +975,21 @@
   "tray.turnOffPreviewAxis": "Isključi os pregleda (S)",
   "tray.turnOnPreviewAxis": "Uključi os pregleda (S)",
   "tray.undo": "Poništi (⌘Z)",
-  "tray.zoomToFit": "Povećaj da stane"
+  "tray.zoomToFit": "Povećaj da stane",
+  "tray.removeSilences": "Ukloni tišine",
+  "silence.detection": "Otkrivanje",
+  "silence.silenceLevel": "Razina tišine",
+  "silence.minimumPause": "Najkraća stanka",
+  "silence.padding": "Odmak",
+  "silence.summary": "{0} stanki · uklanja {1} · {2} → {3}",
+  "silence.noPausesFound": "Na ovoj razini nema stanki",
+  "silence.wholeClipBelowLevel": "Cijeli isječak je ispod ove razine",
+  "silence.clipsSkipped": "Preskočeno isječaka: {0} ({1})",
+  "silence.reasonNoSound": "nema zvuka",
+  "silence.reasonSpeedCurve": "brzina mu se mijenja tijekom vremena",
+  "silence.reasonLoading": "zvuk se još čita",
+  "silence.selectClipWithSound": "Odaberite isječak sa zvukom da biste uklonili tišine",
+  "silence.cannotRemove": "Tišine se ne mogu ukloniti: {0}",
+  "silence.removePauses": "Ukloni stanke",
+  "silence.removedPauses": "Uklonjeno stanki: {0} ({1})"
 }

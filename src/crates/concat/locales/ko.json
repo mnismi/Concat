@@ -975,5 +975,21 @@
   "tray.turnOffPreviewAxis": "미리보기 축 끄기 (S)",
   "tray.turnOnPreviewAxis": "미리보기 축 켜기 (S)",
   "tray.undo": "실행 취소 (⌘Z)",
-  "tray.zoomToFit": "화면에 맞추기"
+  "tray.zoomToFit": "화면에 맞추기",
+  "tray.removeSilences": "무음 제거",
+  "silence.detection": "감지",
+  "silence.silenceLevel": "무음 레벨",
+  "silence.minimumPause": "최소 멈춤",
+  "silence.padding": "여유",
+  "silence.summary": "멈춤 {0}개 · {1} 제거 · {2} → {3}",
+  "silence.noPausesFound": "이 레벨에서 멈춤을 찾지 못했습니다",
+  "silence.wholeClipBelowLevel": "클립 전체가 이 레벨보다 낮습니다",
+  "silence.clipsSkipped": "클립 {0}개 건너뜀: {1}",
+  "silence.reasonNoSound": "소리 없음",
+  "silence.reasonSpeedCurve": "속도가 시간에 따라 바뀝니다",
+  "silence.reasonLoading": "소리를 아직 읽는 중입니다",
+  "silence.selectClipWithSound": "무음을 제거하려면 소리가 있는 클립을 선택하세요",
+  "silence.cannotRemove": "무음을 제거할 수 없습니다: {0}",
+  "silence.removePauses": "멈춤 제거",
+  "silence.removedPauses": "멈춤 {0}개 제거됨 ({1})"
 }

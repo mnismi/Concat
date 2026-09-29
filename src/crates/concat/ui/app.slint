@@ -26,6 +26,7 @@ import { ModelData, SettingsData, SettingsDialog, SystemFactData } from "dialogs
 import { ProjectDialog, ProjectSheetData } from "dialogs/project.slint";
 import { RelinkDialog, RelinkData, MissingMediaItem } from "dialogs/relink.slint";
 import { CaptionsDialog, CaptionsSheetData } from "dialogs/captions.slint";
+import { SilenceDialog, SilenceSheetData } from "dialogs/silence.slint";
 import { SpeechDialog, SpeechSheetData } from "dialogs/speech.slint";
 import { DockDivider, DockSide, SeatBox } from "dock.slint";
 import { Editor } from "editor.slint";
@@ -42,7 +43,7 @@ import { TooltipLayer } from "primitives/tooltip.slint";
 import { Workspace } from "workspace/workspace.slint";
 import {
     ClipData, ClipField, ClipKeyData, ClipKind, ClipTextField, DropData, EffectSpanData, Keyframes,
-    SelectedClipData, StageGuideData, StageItemData, TextAlignment, TimelineTabData,
+    SelectedClipData, SilenceShadeData, StageGuideData, StageItemData, TextAlignment, TimelineTabData,
     TimelineTool, TrackData, TrackSize,
 } from "timeline/model.slint";
 
@@ -57,10 +58,10 @@ export {
     EffectData, MediaFilter, MediaItemData, MediaKind, TextPresetData,
     ClipData, ClipField, ClipKeyData, ClipKind, ClipTextField, DropData, EffectSpanData, Keyframes,
     KeyEditor, KeyMarkData, KeyRowData, ScopeMarkData, Scopes,
-    SelectedClipData, StageGuideData, StageItemData, TextAlignment, TimelineTabData,
+    SelectedClipData, StageGuideData, SilenceShadeData, StageItemData, TextAlignment, TimelineTabData,
     TimelineTool, TrackData, TrackSize, MenuItemData, MenuRow, ExportData, ExportPhase, ModelData, SettingsData,
     ChipOption, RecentProjectData, StartData, SystemFactData, ToastData, ProjectSheetData,
-    CaptionsSheetData, SpeechSheetData,
+    CaptionsSheetData, SilenceSheetData, SpeechSheetData,
 }
 
 export component App inherits Window {
@@ -111,7 +112,7 @@ export component App inherits Window {
     }
     property <bool> sheet-open: root.export.open || root.settings.open
         || root.project-sheet.open || root.captions.open || root.speech.open
-        || root.start.composing;
+        || root.silence.open || root.start.composing;
     changed sheet-open => {
         if (!root.sheet-open) {
             keys.focus();
@@ -285,6 +286,13 @@ export component App inherits Window {
     callback captions-size-changed(index: int);
     callback captions-begin();
     callback captions-cancel();
+    /// The Remove Silences sheet: three numbers and what they find.
+    in property <SilenceSheetData> silence;
+    callback silence-closed();
+    callback silence-level-changed(value: float);
+    callback silence-min-pause-changed(value: float);
+    callback silence-padding-changed(value: float);
+    callback silence-apply();
 
     in property <SpeechSheetData> speech;
     in property <[string]> speech-models;
@@ -690,6 +698,20 @@ export component App inherits Window {
         size-changed(index) => { root.captions-size-changed(index); }
         begin => { root.captions-begin(); }
         cancel => { root.captions-cancel(); }
+    }
+
+    SilenceDialog {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        data: root.silence;
+
+        closed => { root.silence-closed(); }
+        level-changed(value) => { root.silence-level-changed(value); }
+        min-pause-changed(value) => { root.silence-min-pause-changed(value); }
+        padding-changed(value) => { root.silence-padding-changed(value); }
+        apply => { root.silence-apply(); }
     }
 
     SpeechDialog {

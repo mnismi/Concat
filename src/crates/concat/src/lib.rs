@@ -48,6 +48,7 @@ use dock::{Dock, SEAT_MIN_GRAB, SEAT_MIN_H, SEAT_MIN_W};
 use host::{Host, Shell, on_ui};
 use panes::Msg;
 use panes::captions::CaptionsMsg;
+use panes::silence::SilenceMsg;
 use panes::export::ExportMsg;
 use panes::media_bin::MediaMsg;
 use panes::monitor::MonitorMsg;
@@ -205,6 +206,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
         editor.set_clips(ModelRc::from(models.clips.clone()));
         editor.set_stage_items(ModelRc::from(models.stage.clone()));
         editor.set_stage_guides(ModelRc::from(models.guides.clone()));
+        editor.set_silence_shades(ModelRc::from(models.silence_shades.clone()));
         editor.set_media(ModelRc::from(models.media.clone()));
         editor.set_video_effects(ModelRc::from(models.video_effects.clone()));
         editor.set_audio_effects(ModelRc::from(models.audio_effects.clone()));
@@ -1459,6 +1461,24 @@ pub fn run() -> Result<(), slint::PlatformError> {
     }));
     app.on_captions_cancel(on_window!(|state| {
         state.handle(Msg::Captions(CaptionsMsg::Cancel));
+    }));
+    editor.on_silences(on_window!(|state| {
+        state.handle(Msg::Silence(SilenceMsg::Open));
+    }));
+    app.on_silence_closed(on_window!(|state| {
+        state.handle(Msg::Silence(SilenceMsg::Close));
+    }));
+    app.on_silence_level_changed(on_window!(|state, value: f32| {
+        state.handle(Msg::Silence(SilenceMsg::LevelChanged(value)));
+    }));
+    app.on_silence_min_pause_changed(on_window!(|state, value: f32| {
+        state.handle(Msg::Silence(SilenceMsg::MinPauseChanged(value)));
+    }));
+    app.on_silence_padding_changed(on_window!(|state, value: f32| {
+        state.handle(Msg::Silence(SilenceMsg::PaddingChanged(value)));
+    }));
+    app.on_silence_apply(on_window!(|state| {
+        state.handle(Msg::Silence(SilenceMsg::Apply));
     }));
     app.on_speech_closed(on_window!(|state| {
         state.handle(Msg::Speech(SpeechMsg::Close));

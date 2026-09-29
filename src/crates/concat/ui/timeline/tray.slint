@@ -72,6 +72,7 @@ export component TimelineTray inherits Rectangle {
     in property <bool> can-redo;
     /// Empty when the selection can be merged; otherwise why it cannot.
     in property <string> merge-blocked-because;
+    in property <string> silence-blocked-because;
     /// What the selection offers the sound and word tools. Each is one
     /// clip's worth of truth, decided by Rust; see the Editor global.
     in property <bool> sound-selected;
@@ -102,6 +103,7 @@ export component TimelineTray inherits Rectangle {
     callback delete-selected();
     callback captions();
     callback speak();
+    callback silences();
     callback add-track();
     callback fit();
     callback zoom(factor: float);
@@ -268,6 +270,14 @@ export component TimelineTray inherits Rectangle {
             label: I18n.t("tray.textToSpeech");
             icon-size: 16px;
             clicked => { root.speak(); }
+        }
+        TrayButton {
+            glyph: Glyph.waveform;
+            label: root.silence-blocked-because == "" ? I18n.t("tray.removeSilences")
+                : root.silence-blocked-because;
+            icon-size: 16px;
+            enabled: root.silence-blocked-because == "";
+            clicked => { root.silences(); }
         }
 
         Rectangle { horizontal-stretch: 1; }

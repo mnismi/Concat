@@ -975,5 +975,21 @@
   "tray.turnOffPreviewAxis": "خاموش کردن محور پیش‌نمایش (S)",
   "tray.turnOnPreviewAxis": "روشن کردن محور پیش‌نمایش (S)",
   "tray.undo": "واگرد (⌘Z)",
-  "tray.zoomToFit": "بزرگ‌نمایی متناسب"
+  "tray.zoomToFit": "بزرگ‌نمایی متناسب",
+  "tray.removeSilences": "حذف سکوت‌ها",
+  "silence.detection": "تشخیص",
+  "silence.silenceLevel": "سطح سکوت",
+  "silence.minimumPause": "حداقل مکث",
+  "silence.padding": "حاشیه",
+  "silence.summary": "{0} مکث · حذف {1} · {2} → {3}",
+  "silence.noPausesFound": "در این سطح مکثی پیدا نشد",
+  "silence.wholeClipBelowLevel": "کل کلیپ زیر این سطح است",
+  "silence.clipsSkipped": "{0} کلیپ رد شد: {1}",
+  "silence.reasonNoSound": "بدون صدا",
+  "silence.reasonSpeedCurve": "سرعت آن در طول زمان تغییر می‌کند",
+  "silence.reasonLoading": "صدا هنوز در حال خواندن است",
+  "silence.selectClipWithSound": "یک کلیپ صدادار انتخاب کنید تا سکوت‌هایش حذف شود",
+  "silence.cannotRemove": "حذف سکوت‌ها ممکن نیست: {0}",
+  "silence.removePauses": "حذف مکث‌ها",
+  "silence.removedPauses": "{0} مکث حذف شد ({1})"
 }

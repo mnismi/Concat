@@ -60,6 +60,12 @@ pub struct Preferences {
     /// default: a burst of sound on every pass of the pointer is a lot to
     /// ask of a room.
     pub preview_axis_audio: bool,
+    /// Remove Silences' level as last used, in dBFS. `None` is -40.
+    pub silence_level_db: Option<f32>,
+    /// Remove Silences' minimum pause as last used, in seconds. `None` is 0.5.
+    pub silence_min_pause: Option<f64>,
+    /// Remove Silences' padding as last used, in seconds. `None` is 0.1.
+    pub silence_padding: Option<f64>,
     /// Where model downloads look first: a `SourcePreference` by name.
     /// Absent is automatic.
     pub download_source: Option<String>,

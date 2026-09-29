@@ -13,7 +13,7 @@ import { DockDivider, DockSide, SeatBox } from "dock.slint";
 import { PaneKind } from "workspace/pane-switcher.slint";
 import { MenuItemData } from "primitives/context-menu.slint";
 import {
-    ClipData, ClipField, ClipTextField, DropData, SelectedClipData,
+    ClipData, ClipField, ClipTextField, DropData, SelectedClipData, SilenceShadeData,
     StageGuideData, StageItemData, TimelineTabData, TimelineTool, TrackData,
     TrackSize,
 } from "timeline/model.slint";
@@ -301,6 +301,11 @@ export global Editor {
     in-out property <bool> can-undo;
     in-out property <bool> can-redo;
     in-out property <string> merge-blocked-because;
+    /// Remove Silences: "" when the selection can be worked on, otherwise
+    /// why not, which becomes the tray button's label.
+    in-out property <string> silence-blocked-because;
+    /// The spans the open Remove Silences sheet would take out.
+    in-out property <[SilenceShadeData]> silence-shades;
     /// What the selection offers the tray's sound and word tools: one clip
     /// with sound for Captions to start on, one title for Speak to read.
     /// Hints, not gates - both sheets open without them.
@@ -349,6 +354,8 @@ export global Editor {
     /// of the clip's own menu - see `clip-context`.
     callback captions();
     callback speak();
+    /// The tray's Remove Silences tool; opens its sheet.
+    callback silences();
     callback add-track();
     callback zoom-to-fit(width: length);
     callback zoom(factor: float, anchor-seconds: float);

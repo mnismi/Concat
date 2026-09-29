@@ -975,5 +975,21 @@
   "tray.turnOffPreviewAxis": "Turn off Preview Axis (S)",
   "tray.turnOnPreviewAxis": "Turn on Preview Axis (S)",
   "tray.undo": "Undo (⌘Z)",
-  "tray.zoomToFit": "Zoom to fit"
+  "tray.zoomToFit": "Zoom to fit",
+  "tray.removeSilences": "Remove Silences",
+  "silence.detection": "Detection",
+  "silence.silenceLevel": "Silence level",
+  "silence.minimumPause": "Minimum pause",
+  "silence.padding": "Padding",
+  "silence.summary": "{0} pauses · removes {1} · {2} → {3}",
+  "silence.noPausesFound": "No pauses found at this level",
+  "silence.wholeClipBelowLevel": "The whole clip is below this level",
+  "silence.clipsSkipped": "{0} clips skipped: {1}",
+  "silence.reasonNoSound": "no sound",
+  "silence.reasonSpeedCurve": "its speed changes over time",
+  "silence.reasonLoading": "the sound is still being read",
+  "silence.selectClipWithSound": "Select a clip with sound to remove its silences",
+  "silence.cannotRemove": "Can't remove silences: {0}",
+  "silence.removePauses": "Remove pauses",
+  "silence.removedPauses": "Removed {0} pauses ({1})"
 }

@@ -563,6 +563,7 @@ pub struct Models {
     pub spans: RefCell<HashMap<String, Rc<VecModel<EffectSpanData>>>>,
     pub stage: Rc<VecModel<StageItemData>>,
     pub guides: Rc<VecModel<StageGuideData>>,
+    pub silence_shades: Rc<VecModel<SilenceShadeData>>,
     pub media: Rc<VecModel<MediaItemData>>,
     pub video_effects: Rc<VecModel<EffectData>>,
     pub audio_effects: Rc<VecModel<EffectData>>,
@@ -643,6 +644,7 @@ impl Models {
             spans: RefCell::new(HashMap::new()),
             stage: Rc::new(VecModel::default()),
             guides: Rc::new(VecModel::default()),
+            silence_shades: Rc::new(VecModel::default()),
             media: Rc::new(VecModel::default()),
             video_effects: Rc::new(VecModel::default()),
             audio_effects: Rc::new(VecModel::default()),
@@ -898,6 +900,7 @@ pub struct Studio {
     pub drop: Option<DropPlan>,
     pub project_sheet: crate::panes::project::ProjectPane,
     pub captions: crate::panes::captions::CaptionsPane,
+    pub silence: crate::panes::silence::SilencePane,
     pub speech: crate::panes::speech::SpeechPane,
     /// Every speaker the voice engine offers, in its own order.
     /// The looks the Text page offers; see `presets`.
@@ -2070,6 +2073,7 @@ impl Studio {
             drop: None,
             project_sheet: crate::panes::project::ProjectPane::default(),
             captions: crate::panes::captions::CaptionsPane::default(),
+            silence: crate::panes::silence::SilencePane::default(),
             speech: crate::panes::speech::SpeechPane::default(),
             text_presets,
             installed_fonts: presets::installed_fonts(&host.dirs),
@@ -2915,6 +2919,11 @@ impl Studio {
                             .waves
                             .borrow_mut()
                             .retain(|key, _| !key.starts_with(&prefix));
+                        if studio.silence.open {
+                            studio.handle(crate::panes::Msg::Silence(
+                                crate::panes::silence::SilenceMsg::Refresh,
+                            ));
+                        }
                     }
                 },
             );
@@ -3133,6 +3142,11 @@ impl Studio {
         }
         waves.insert(key, built.clone());
         (built, placed.0, placed.1)
+    }
+
+    /// The waveform of the sound `clip` plays, when it has been read.
+    pub(crate) fn peaks_of(&self, clip: &Clip) -> Option<Arc<Pyramid>> {
+        self.peaks.get(&art_key(&clip.media_id, clip.audio_stream)).cloned()
     }
 
     // ── placing things ──
@@ -6735,6 +6749,11 @@ impl Studio {
                 pane.update(msg, self);
                 self.captions = pane;
             }
+            crate::panes::Msg::Silence(msg) => {
+                let mut pane = std::mem::take(&mut self.silence);
+                pane.update(msg, self);
+                self.silence = pane;
+            }
             crate::panes::Msg::Speech(msg) => {
                 let mut pane = std::mem::take(&mut self.speech);
                 pane.update(msg, self);
@@ -7217,6 +7236,18 @@ impl Studio {
         }
         sync(&models.stage, self.stage_items());
         sync(&models.guides, self.stage_guides.clone());
+        sync(
+            &models.silence_shades,
+            self.silence
+                .shades()
+                .into_iter()
+                .map(|(row, start, length)| SilenceShadeData {
+                    row,
+                    start: start as f32,
+                    length: length as f32,
+                })
+                .collect(),
+        );
         let (path, width, erase) = self.stroke_overlay();
         editor.set_stroke_path(path.into());
         editor.set_stroke_width(width);
@@ -7313,6 +7344,11 @@ impl Studio {
             Some(reason) => reason.into(),
             None => SharedString::new(),
         });
+        editor.set_silence_blocked_because(
+            crate::panes::silence::blocked(self)
+                .map(SharedString::from)
+                .unwrap_or_default(),
+        );
 
         // The selected clip's chains, as the inspector's two stacks.
         let (video, audio) = match self.sole_selection().and_then(|id| self.clip(&id)) {
@@ -8824,6 +8860,7 @@ impl Studio {
                 .collect(),
         );
         app.set_captions(self.captions.data(self));
+        app.set_silence(self.silence.data());
         let voices = installed(&self.settings.voices);
         sync(
             &models.speech_models,

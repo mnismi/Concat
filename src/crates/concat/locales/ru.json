@@ -975,5 +975,21 @@
   "tray.turnOffPreviewAxis": "Выключить ось предпросмотра (S)",
   "tray.turnOnPreviewAxis": "Включить ось предпросмотра (S)",
   "tray.undo": "Отменить (⌘Z)",
-  "tray.zoomToFit": "Вместить"
+  "tray.zoomToFit": "Вместить",
+  "tray.removeSilences": "Удалить тишину",
+  "silence.detection": "Обнаружение",
+  "silence.silenceLevel": "Уровень тишины",
+  "silence.minimumPause": "Минимальная пауза",
+  "silence.padding": "Запас",
+  "silence.summary": "Пауз: {0} · удаляет {1} · {2} → {3}",
+  "silence.noPausesFound": "На этом уровне пауз не найдено",
+  "silence.wholeClipBelowLevel": "Весь клип ниже этого уровня",
+  "silence.clipsSkipped": "Пропущено клипов: {0} — {1}",
+  "silence.reasonNoSound": "нет звука",
+  "silence.reasonSpeedCurve": "скорость меняется со временем",
+  "silence.reasonLoading": "звук ещё считывается",
+  "silence.selectClipWithSound": "Выберите клип со звуком, чтобы удалить тишину",
+  "silence.cannotRemove": "Не удаётся удалить тишину: {0}",
+  "silence.removePauses": "Удалить паузы",
+  "silence.removedPauses": "Удалено пауз: {0} ({1})"
 }
