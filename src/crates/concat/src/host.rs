@@ -240,7 +240,9 @@ fn deliver<T: Send + 'static>(
                 let mut studio = shell.studio.borrow_mut();
                 then(&mut studio, &app, &shell.models, result);
             }
+            let probe_at = std::time::Instant::now();
             shell.studio.borrow().publish(&app, &shell.models);
+            crate::probe::add(crate::probe::PUBLISH, probe_at.elapsed());
         });
     });
 }

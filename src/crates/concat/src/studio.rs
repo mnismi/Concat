@@ -2688,6 +2688,7 @@ impl Studio {
             slint::TimerMode::Repeated,
             std::time::Duration::from_millis(33),
             || {
+                let probe_at = std::time::Instant::now();
                 crate::host::Shell::with(|shell, app| {
                     {
                         let mut studio = shell.studio.borrow_mut();
@@ -2723,6 +2724,7 @@ impl Studio {
                     }
                     shell.studio.borrow().publish_lanes(&app, &shell.models);
                 });
+                crate::probe::add(crate::probe::TICK, probe_at.elapsed());
             },
         );
     }

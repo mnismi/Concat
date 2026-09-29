@@ -40,6 +40,7 @@ mod platform;
 pub use platform::{FilePicker, install_file_picker};
 mod panes;
 mod prefs;
+mod probe;
 mod presets;
 mod studio;
 mod sysinfo;

@@ -65,6 +65,25 @@ fn main() {
     let check = std::env::args().any(|arg| arg == "--check");
     let quick = std::env::args().any(|arg| arg == "--quick");
     concat_media::init();
+    // Playback through the monitor, alone and with progress, until it is
+    // known to finish everywhere the table runs.
+    if std::env::args().any(|arg| arg == "--playback") {
+        let media = Media::synthesise();
+        eprintln!("1080p media ready");
+        for m in playback(&media, "1080p") {
+            eprintln!("{}: {:.1} {} ({})", m.name, m.value, m.unit, m.note);
+        }
+        let media = Media::synthesise_as(&Spec {
+            name: "perf-play-4k",
+            frames: 90,
+            ..Spec::PHONE_4K
+        });
+        eprintln!("4K media ready");
+        for m in playback(&media, "4K phone") {
+            eprintln!("{}: {:.1} {} ({})", m.name, m.value, m.unit, m.note);
+        }
+        return;
+    }
     let mut results = vec![
         plan_200_clips(),
         undo_200_edits(),
@@ -81,15 +100,6 @@ fn main() {
         }
         results.extend(decode_4k());
         results.extend(scrub(&media));
-        results.extend(playback(&media, "1080p"));
-        results.extend(playback(
-            &Media::synthesise_as(&Spec {
-                name: "perf-play-4k",
-                frames: 90,
-                ..Spec::PHONE_4K
-            }),
-            "4K phone",
-        ));
         if let Some(measure) = compose_gpu() {
             results.push(measure);
         }
@@ -918,6 +928,9 @@ fn playback(media: &Media, label: &'static str) -> Vec<Measure> {
         let _texture = monitor.texture_of(&sources, spec).expect("draws");
         let _ = device.poll(wgpu::PollType::wait_indefinitely());
         draw_ms += at.elapsed().as_secs_f64() * 1e3;
+        if index % 15 == 0 {
+            eprintln!("  frame {index}: {:.1?} so far", started.elapsed());
+        }
     }
     let elapsed = started.elapsed().as_secs_f64();
     vec![Measure {
