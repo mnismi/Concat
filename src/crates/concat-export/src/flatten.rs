@@ -36,6 +36,9 @@ pub fn flatten_timeline_in(
     timeline_id: Option<&str>,
     project_dir: Option<&Path>,
 ) -> Vec<ExportClip> {
+    // Pieces play as the clips inside them; nothing below knows they exist.
+    let expanded = concat_project::pieces::expand_pieces(project, timeline_id);
+    let project: &Project = &expanded;
     let Some(timeline) = pick_timeline(project, timeline_id) else {
         return Vec::new();
     };
@@ -406,5 +409,49 @@ mod tests {
             duration: -1.0,
         });
         assert_eq!(export_animations(&clip), (None, None));
+    }
+
+    #[test]
+    fn a_piece_flattens_to_the_clips_inside_it() {
+        use std::sync::Arc;
+
+        use concat_project::model::{
+            ClipKind as Kind, MediaItem, MediaKind, Piece, PieceLane, PiecePlacement,
+        };
+        let mut project = Project::new();
+        project.media.push(MediaItem {
+            id: "m1".to_owned(),
+            path: "/hand.png".to_owned(),
+            kind: MediaKind::Image,
+            width: Some(400),
+            height: Some(400),
+            piece_media: true,
+            ..MediaItem::default()
+        });
+        let mut hand = concat_project::model::Clip::blank("h", "", Kind::Image, "hand", 0.5, 2.0);
+        hand.media_id = "m1".to_owned();
+        project.pieces.push(Piece {
+            id: "p1".to_owned(),
+            duration: 2.5,
+            lanes: vec![PieceLane {
+                clips: vec![hand],
+                ..PieceLane::default()
+            }],
+            ..Piece::default()
+        });
+        let mut placed =
+            concat_project::model::Clip::blank("c2", "T1", Kind::Piece, "p", 10.0, 2.5);
+        placed.piece = Some(PiecePlacement {
+            piece_id: "p1".to_owned(),
+            texts: Default::default(),
+        });
+        placed.offset_x = 0.25;
+        project.active_mut().clips.push(Arc::new(placed));
+
+        let clips = flatten_timeline(&project, None);
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].path, "/hand.png");
+        assert!((clips[0].start - 10.5).abs() < 1e-9);
+        assert!((clips[0].offset_x - 0.25).abs() < 1e-9);
     }
 }
