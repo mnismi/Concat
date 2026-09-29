@@ -117,6 +117,8 @@ concat-vision.workspace = true
 # The title painter's font list: the families on the machine and the ones
 # in a file, for the Text inspector's picker and its import button.
 concat-text.workspace = true
+# The compiled .slint tree, a crate of its own for build time.
+concat-ui.workspace = true
 
 # Remembered preferences, as a small JSON file in the config directory.
 serde = { version = "1", features = ["derive"] }
@@ -126,9 +128,6 @@ toml = "1.1"
 
 # JPEG encoding for the media artwork cache.
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
-
-[build-dependencies]
-slint-build = "1.18"
 
 [lints]
 workspace = true

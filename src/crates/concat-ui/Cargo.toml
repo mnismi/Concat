@@ -1,0 +1,16 @@
+[package]
+name = "concat-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "The editor window's .slint tree, compiled: the generated code in a crate of its own so an edit to the window's Rust never re-checks it."
+
+# Only the features the generated code needs; the window crate names the
+# backend and renderers, and Cargo unifies the two sets into one slint.
+[dependencies]
+slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2"] }
+
+[build-dependencies]
+slint-build = "1.18"

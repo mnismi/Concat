@@ -22,14 +22,9 @@ use slint::{ModelRc, SharedString, VecModel};
 // object opaque and leaves building and reading one to the host language.
 use slint::private_unstable_api::re_exports::DataTransfer;
 
-// Everything the .slint tree exports, in a module of its own: the workspace
-// lints every public item for documentation, and the generated accessors are
-// thousands of public items nobody documents. The allow covers them and
-// nothing in this file.
-#[allow(missing_docs)]
-mod ui {
-    slint::include_modules!();
-}
+// Everything the .slint tree exports, compiled in concat-ui so that an edit
+// here never re-checks the generated code.
+use concat_ui as ui;
 
 mod chips;
 mod dock;

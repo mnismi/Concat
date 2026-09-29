@@ -21,6 +21,7 @@ concat-speech = { path = "crates/concat-speech" }
 concat-effects = { path = "crates/concat-effects" }
 concat-text = { path = "crates/concat-text" }
 concat-vision = { path = "crates/concat-vision" }
+concat-ui = { path = "crates/concat-ui" }
 concat = { path = "crates/concat" }
 
 serde_json = "1"
@@ -77,6 +78,12 @@ incremental = true
 # on screen tells the difference; if something ever does, the shipping
 # build is `--profile app`.
 [profile.quick.package.concat]
+opt-level = 0
+codegen-units = 256
+
+# The generated Slint code, split out of the window crate so a Rust edit
+# there skips it. Unoptimised for the same reason the window crate is.
+[profile.quick.package.concat-ui]
 opt-level = 0
 codegen-units = 256
 
