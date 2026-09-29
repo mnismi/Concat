@@ -257,6 +257,12 @@ pub(crate) fn build_timeline(
             engine_clip.retime = SpeedCurve::new(&clip.speed_curve);
         }
         engine_clip.animation = animation_of(&clip.animation);
+        let played = |animation: &crate::ExportAnimation| concat_core::motion::Played {
+            id: animation.id.clone(),
+            seconds: animation.seconds,
+        };
+        engine_clip.entrance = clip.entrance.as_ref().map(played);
+        engine_clip.exit = clip.exit.as_ref().map(played);
         engine_clip.blend = concat_core::timeline::Blend::parse(&clip.blend);
         engine_clip.transform = Transform {
             scale: clip.scale,

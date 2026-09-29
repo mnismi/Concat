@@ -18,7 +18,7 @@ use std::path::Path;
 use concat_project::model::{ClipKind as ModelClipKind, KeyProperty, Project, Timeline};
 
 use crate::chains::audio_filter_chain;
-use crate::{ClipKind, ExportClip, ExportKey, TransitionSpec};
+use crate::{ClipKind, ExportAnimation, ExportClip, ExportKey, TransitionSpec};
 
 /// Flattens one timeline of `project` for the exporter - the active one
 /// when `timeline_id` is `None`. Text clips are excluded (they rasterise
@@ -79,6 +79,7 @@ pub fn flatten_timeline_in(
                 // kind fails soft.
                 ModelClipKind::Text | ModelClipKind::Layer => return None,
             };
+            let (entrance, exit) = export_animations(clip);
             Some(ExportClip {
                 path: media.path.clone(),
                 audio_stream: clip.audio_stream,
@@ -100,6 +101,8 @@ pub fn flatten_timeline_in(
                     .map(|point| (point.at, point.speed))
                     .collect(),
                 animation: export_keys(clip),
+                entrance,
+                exit,
                 flip_h: clip.flip_h,
                 flip_v: clip.flip_v,
                 blend: clip.blend.clone(),
@@ -191,6 +194,28 @@ pub fn export_keys(clip: &concat_project::model::Clip) -> Vec<ExportKey> {
         }));
     }
     out
+}
+
+/// The clip's In and Out as the engine plays them: the In held to the
+/// clip, the Out to what the In leaves, and a length that is not a
+/// positive number read as no animation - a hand-edited file degrades to
+/// a clip that stands still.
+pub fn export_animations(
+    clip: &concat_project::model::Clip,
+) -> (Option<ExportAnimation>, Option<ExportAnimation>) {
+    let fit = |animation: &Option<concat_project::model::ClipAnimation>, room: f64| {
+        animation
+            .as_ref()
+            .filter(|animation| animation.duration.is_finite() && animation.duration > 0.0)
+            .map(|animation| ExportAnimation {
+                id: animation.id.clone(),
+                seconds: animation.duration.min(room.max(0.0)),
+            })
+    };
+    let entrance = fit(&clip.animation_in, clip.duration);
+    let taken = entrance.as_ref().map_or(0.0, |animation| animation.seconds);
+    let exit = fit(&clip.animation_out, clip.duration - taken);
+    (entrance, exit)
 }
 
 /// The clip's gain over its length, as `(fraction, gain)` pairs, or empty
@@ -336,5 +361,37 @@ mod tests {
         // by asking for a timeline that does not exist.
         assert!(flatten_timeline(editor.project(), None).is_empty());
         assert!(flatten_timeline(editor.project(), Some("nope")).len() <= 1);
+    }
+
+    #[test]
+    fn the_flattener_holds_the_windows_inside_the_clip() {
+        use concat_project::model::{Clip, ClipAnimation, ClipKind};
+        let mut clip = Clip::blank("c1", "t1", ClipKind::Video, "clip", 0.0, 2.0);
+        clip.animation_in = Some(ClipAnimation {
+            id: "zoom-in".to_owned(),
+            duration: 1.5,
+        });
+        clip.animation_out = Some(ClipAnimation {
+            id: "zoom-out".to_owned(),
+            duration: 1.5,
+        });
+        let (entrance, exit) = export_animations(&clip);
+        assert_eq!(entrance.expect("in").seconds, 1.5);
+        assert_eq!(exit.expect("out").seconds, 0.5);
+    }
+
+    #[test]
+    fn a_length_that_is_not_a_positive_number_plays_nothing() {
+        use concat_project::model::{Clip, ClipAnimation, ClipKind};
+        let mut clip = Clip::blank("c1", "t1", ClipKind::Video, "clip", 0.0, 2.0);
+        clip.animation_in = Some(ClipAnimation {
+            id: "zoom-in".to_owned(),
+            duration: f64::NAN,
+        });
+        clip.animation_out = Some(ClipAnimation {
+            id: "zoom-out".to_owned(),
+            duration: -1.0,
+        });
+        assert_eq!(export_animations(&clip), (None, None));
     }
 }

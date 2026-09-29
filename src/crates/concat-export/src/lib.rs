@@ -129,6 +129,12 @@ pub struct ExportClip {
     /// Empty for none.
     #[serde(default)]
     pub animation: Vec<ExportKey>,
+    /// The preset over the clip's first seconds, if any.
+    #[serde(default)]
+    pub entrance: Option<ExportAnimation>,
+    /// The preset over its last seconds, if any.
+    #[serde(default)]
+    pub exit: Option<ExportAnimation>,
     /// Mirrored left to right.
     #[serde(default)]
     pub flip_h: bool,
@@ -241,6 +247,8 @@ impl ExportClip {
             preserve_pitch: true,
             speed_curve: Vec::new(),
             animation: Vec::new(),
+            entrance: None,
+            exit: None,
             flip_h: false,
             flip_v: false,
             blend: String::new(),
@@ -289,6 +297,16 @@ pub struct ExportKey {
 /// A straight line, for a spec that names no easing.
 fn linear_ease() -> [f64; 4] {
     [0.0, 0.0, 1.0, 1.0]
+}
+
+/// A preset on one end of an exported clip: which, and for how long,
+/// already held inside the clip. See `concat_core::motion`.
+#[derive(Deserialize, Clone, PartialEq, Debug)]
+pub struct ExportAnimation {
+    /// The preset's id.
+    pub id: String,
+    /// Seconds it covers.
+    pub seconds: f64,
 }
 
 /// A transition on the cut into a clip.

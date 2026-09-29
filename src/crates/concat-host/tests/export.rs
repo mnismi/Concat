@@ -740,6 +740,45 @@ fn removing_silences_leaves_only_the_sound() {
     exported.expect_second(2.5, 5);
 }
 
+/// Clip animations reach the picture: a red clip that fades in over its
+/// first second and out over its last starts black, is red in the middle,
+/// and is black again at its end.
+#[test]
+fn an_animation_reaches_the_picture() {
+    use concat_project::commands::AnimationSlot;
+    use concat_project::model::ClipAnimation;
+
+    let scratch = Scratch::new("animations");
+    let red_path = scratch.path().join("red.mp4");
+    let red = [220, 30, 30];
+    solid(&red_path, red);
+    let mut studio = Studio::new(scratch.path(), "Animations", video(WIDTH, HEIGHT, 30, 1));
+    let media = studio.import(&red_path);
+    let clip = studio
+        .apply(Command::AddClipAtFirstFree {
+            media_id: media,
+            start: 0.0,
+        })
+        .expect("placed");
+    for (slot, id) in [
+        (AnimationSlot::In, "fade-in"),
+        (AnimationSlot::Out, "fade-out"),
+    ] {
+        studio.apply(Command::SetClipAnimation {
+            clip_id: clip.clone(),
+            slot,
+            animation: Some(ClipAnimation {
+                id: id.to_owned(),
+                duration: 1.0,
+            }),
+        });
+    }
+    let exported = studio.export("fade in and out");
+    exported.expect_colours(0.0, &[((0.5, 0.5), [0, 0, 0])]);
+    exported.expect_colours(1.5, &[((0.5, 0.5), red)]);
+    exported.expect_colours(2.95, &[((0.5, 0.5), [0, 0, 0])]);
+}
+
 /// Issue #202: on Windows laptops with NVIDIA chips an export took the app
 /// down at its first frame, with nothing in the log. The export had opened
 /// a device of its own through every API wgpu was built with, where the
