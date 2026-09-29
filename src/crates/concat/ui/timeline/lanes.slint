@@ -5,7 +5,7 @@ import { Wave } from "../primitives/wave.slint";
 import { Theme } from "../theme/theme.slint";
 import { Fmt, Payload } from "../util.slint";
 import { Glyph, Icon } from "../icons.slint";
-import { ClipData, ClipKind, DropData, TimelineTool, TrackData } from "model.slint";
+import { ClipData, ClipKind, DropData, SilenceShadeData, TimelineTool, TrackData } from "model.slint";
 import { ContextMenu, MenuItemData } from "../primitives/context-menu.slint";
 
 // The lanes: the ruler, the banded track stack, the clips on it, the playhead
@@ -1129,6 +1129,9 @@ export component Lanes inherits Rectangle {
     /// The answer to the last hover. `active` is also the verdict — false is
     /// how the drag is refused, and the cursor says so.
     in property <DropData> drop;
+    /// The spans the open Remove Silences sheet would take out, shaded over
+    /// their clips. Empty while the sheet is closed.
+    in property <[SilenceShadeData]> silence-shades;
 
     property <length> px-per-second: 1px / Math.max(root.seconds-per-pixel, 0.000001);
     property <length> lanes-h: Math.max(0px, root.height - root.ruler-height);
@@ -1534,6 +1537,22 @@ export component Lanes inherits Rectangle {
                     overflow: elide;
                 }
             }
+        }
+
+        // ── the silences the open sheet would take out ───────────────────
+        //
+        // Over the clips and under nothing else. Alpha in the paint, not
+        // `opacity`, for the reason the ghost gives: a long span would
+        // otherwise ask the GPU for a texture as wide as itself.
+        for shade in root.silence-shades: Rectangle {
+            x: root.at(shade.start);
+            y: root.row-y(shade.row) + 4px;
+            width: Math.max(1px, shade.length * root.px-per-second);
+            height: Math.max(2px, root.tracks[shade.row].height - 10px);
+            border-radius: 2px;
+            background: Theme.danger.with-alpha(0.35);
+            border-width: 1px;
+            border-color: Theme.danger.with-alpha(0.7);
         }
 
         // ── the ruler ────────────────────────────────────────────────────

@@ -434,6 +434,7 @@ export component TimelinePane inherits Rectangle {
                 scrolled(seconds) => { root.scrolled(seconds); }
 
                 drop: root.drop;
+                silence-shades: root.silence-shades;
                 drag-hovered(payload, seconds, row) => {
                     root.drag-hovered(payload, seconds, row);
                 }

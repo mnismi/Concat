@@ -7,6 +7,14 @@ for the tag being released, and falls back to the commit subjects for a
 release that has none. Releases before 0.2.5 have their notes on the
 releases page only: https://github.com/jub0t/Concat/releases
 
+## Unreleased
+
+### Timeline
+
+- Remove Silences: select clips, open it from the timeline tray, and the
+  pauses below a level you set are cut out and the gaps closed, in one
+  undo step.
+
 ## 0.2.5 — 2026-09-28
 
 The release where the picture pipeline moves onto the GPU end to end.
