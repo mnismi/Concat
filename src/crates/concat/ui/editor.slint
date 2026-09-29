@@ -12,6 +12,7 @@ import { MediaFilter, MediaItemData, TextPresetData } from "workspace/media-pane
 import { DockDivider, DockSide, SeatBox } from "dock.slint";
 import { PaneKind } from "workspace/pane-switcher.slint";
 import { MenuItemData } from "primitives/context-menu.slint";
+import { AnimationPresetData } from "inspector/animations-panel.slint";
 import {
     ClipData, ClipField, ClipTextField, DropData, SelectedClipData, SilenceShadeData,
     StageGuideData, StageItemData, TimelineTabData, TimelineTool, TrackData,
@@ -153,6 +154,9 @@ export global Editor {
     in-out property <[CatalogueEntryData]> catalogue-filters;
     in-out property <[CatalogueEntryData]> catalogue-audio;
     in-out property <[CatalogueEntryData]> catalogue-transitions;
+    /// The Animations tab's presets, one list per end.
+    in-out property <[AnimationPresetData]> animation-presets-in;
+    in-out property <[AnimationPresetData]> animation-presets-out;
     in-out property <[string]> effect-groups;
     in-out property <[string]> filter-groups;
     in-out property <[string]> audio-groups;
@@ -271,6 +275,9 @@ export global Editor {
     /// The transition riding into the selected clip; see VideoPanel.
     callback transition-remove();
     callback transition-duration-set(seconds: float);
+    callback animation-pick(out: bool, id: string);
+    callback animation-length-set(out: bool, seconds: float);
+    callback animation-replay(out: bool);
 
     // ── the timeline ──
     in-out property <[TimelineTabData]> timeline-tabs;

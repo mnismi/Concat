@@ -214,6 +214,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
         editor.set_catalogue_filters(ModelRc::from(models.catalogue_filters.clone()));
         editor.set_catalogue_audio(ModelRc::from(models.catalogue_audio.clone()));
         editor.set_catalogue_transitions(ModelRc::from(models.catalogue_transitions.clone()));
+        editor.set_animation_presets_in(ModelRc::from(models.animation_presets_in.clone()));
+        editor.set_animation_presets_out(ModelRc::from(models.animation_presets_out.clone()));
         editor.set_effect_groups(ModelRc::from(models.effect_groups.clone()));
         editor.set_filter_groups(ModelRc::from(models.filter_groups.clone()));
         editor.set_audio_groups(ModelRc::from(models.audio_groups.clone()));
@@ -1126,6 +1128,22 @@ pub fn run() -> Result<(), slint::PlatformError> {
     }));
     editor.on_transition_remove(on_window!(|state| {
         state.remove_transition();
+    }));
+    let slot = |out: bool| {
+        if out {
+            concat_project::commands::AnimationSlot::Out
+        } else {
+            concat_project::commands::AnimationSlot::In
+        }
+    };
+    editor.on_animation_pick(on_window!(|state, out: bool, id: slint::SharedString| {
+        state.pick_animation(slot(out), &id);
+    }));
+    editor.on_animation_length_set(on_window!(|state, out: bool, seconds: f32| {
+        state.set_animation_length(slot(out), seconds as f64);
+    }));
+    editor.on_animation_replay(on_window!(|state, out: bool| {
+        state.replay_animation(slot(out));
     }));
     editor.on_transition_duration_set(on_window!(|state, seconds: f32| {
         state.set_transition_duration(seconds as f64);

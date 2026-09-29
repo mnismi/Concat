@@ -121,6 +121,10 @@ export struct ClipData {
     /// marker at the clip's head is sized to this, in step with what the
     /// cut actually rides.
     transition-duration: float,
+    /// Seconds of In and Out animation at the clip's ends; zero for none.
+    /// Drawn as a bar along the top of each end.
+    animation-in: float,
+    animation-out: float,
     /// seconds of audio ramp at each end; zero for none
     fade-in: float,
     fade-out: float,
@@ -293,6 +297,14 @@ export struct SelectedClipData {
     transition-id: string,
     transition-name: string,
     transition-duration: float,
+    // the animations at either end; an empty id means none. A length is
+    // the slider's value, and a room its ceiling: the clip less the other end.
+    animation-in-id: string,
+    animation-in-length: float,
+    animation-in-room: float,
+    animation-out-id: string,
+    animation-out-length: float,
+    animation-out-room: float,
 
     // transform — video and stills
     scale: float,

@@ -696,6 +696,25 @@ component Clip inherits Rectangle {
     // spans from x: -root.half-w to x: root.half-w.
     // Rendered on top of `touch` so the seam button and slider handles receive
     // direct, unhindered pointer events for 1:1 real-time drag adjustments.
+    // The In and Out animations: a bar along the top edge of each end, as
+    // wide as its window, so an animated clip reads as one at a glance.
+    if root.item.animation-in > 0: Rectangle {
+        x: 0;
+        y: 0;
+        width: Math.min(root.width, root.item.animation-in * root.px-per-second);
+        height: 3px;
+        background: Theme.accent;
+        opacity: 0.85;
+    }
+    if root.item.animation-out > 0: Rectangle {
+        x: root.width - self.width;
+        y: 0;
+        width: Math.min(root.width, root.item.animation-out * root.px-per-second);
+        height: 3px;
+        background: Theme.accent;
+        opacity: 0.85;
+    }
+
     if root.has-transition && root.width > 10px: Rectangle {
         x: -root.half-w;
         y: 0;

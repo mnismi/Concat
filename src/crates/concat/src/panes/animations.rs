@@ -5,11 +5,10 @@
 //! long an animation may be, and which stretch of the timeline the
 //! preview plays after a pick. No window and no project: the studio asks,
 //! and paints what comes back.
-#![allow(dead_code)] // wired in Task 5
 
 use concat_core::motion::{self, Group, Preset, Side};
 use concat_project::commands::AnimationSlot;
-use concat_project::model::{Clip, ClipAnimation, MIN_ANIMATION};
+use concat_project::model::{Clip, ClipAnimation};
 
 /// The length a new animation starts at, when the clip has room for it.
 pub const DEFAULT_LENGTH: f64 = 0.5;
@@ -49,13 +48,6 @@ pub fn room(clip: &Clip, slot: AnimationSlot) -> f64 {
         AnimationSlot::Out => AnimationSlot::In,
     };
     (clip.duration - current(clip, other).map_or(0.0, |animation| animation.duration)).max(0.0)
-}
-
-/// The length slider's range for one end: from the shortest a command
-/// keeps to the room the other end leaves.
-pub fn length_range(clip: &Clip, slot: AnimationSlot) -> (f64, f64) {
-    let room = room(clip, slot);
-    (MIN_ANIMATION.min(room), room)
 }
 
 /// The length a preset picked on this end starts at. An end that already
@@ -125,7 +117,6 @@ mod tests {
         let clip = with(clip(5.0), AnimationSlot::Out, 2.0);
         assert_eq!(room(&clip, AnimationSlot::In), 3.0);
         assert_eq!(room(&clip, AnimationSlot::Out), 5.0);
-        assert_eq!(length_range(&clip, AnimationSlot::In), (MIN_ANIMATION, 3.0));
     }
 
     #[test]

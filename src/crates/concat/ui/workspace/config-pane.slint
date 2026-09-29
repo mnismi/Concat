@@ -16,6 +16,7 @@ import {
     CurveData, CurveGroupData, WheelData, WheelGroupData,
 } from "../inspector/grading.slint";
 import { TextPanel } from "../inspector/text-panel.slint";
+import { AnimationPresetData, AnimationsPanel } from "../inspector/animations-panel.slint";
 import {
     ClipField, ClipKind, ClipTextField, SelectedClipData,
 } from "../timeline/model.slint";
@@ -201,11 +202,17 @@ export component ConfigPane inherits Rectangle {
     callback cutout-clear();
     callback transition-remove();
     callback transition-duration-set(seconds: float);
+    in property <[AnimationPresetData]> animation-presets-in;
+    in property <[AnimationPresetData]> animation-presets-out;
+    callback animation-pick(out: bool, id: string);
+    callback animation-length-set(out: bool, seconds: float);
+    callback animation-replay(out: bool);
 
 
     // The tab strip follows the selection, and stays short: three tabs at
     // most, each with a dropdown of its sections, because seven tabs on a
-    // strip this narrow cannot be read. Video holds what happens to the
+    // strip this narrow cannot be read. Animations is the one tab past that
+    // rule: every picture clip needs it, and it has no sections of its own. Video holds what happens to the
     // picture - its placement, its speed, its colour; Audio
     // the level, the fades and the voice and room chain; Effects the two
     // shelves and the picture's chain. A still loses Audio, a sound clip
@@ -222,18 +229,18 @@ export component ConfigPane inherits Rectangle {
     /// "nothing here". Its chain is its own, though - the look or effect it
     /// was dropped as, with knobs that can ride - so Effects stays.
     property <bool> is-layer: root.selected.kind == ClipKind.filter;
-    property <[string]> tabs: root.is-text ? ["Text", "Effects"]
+    property <[string]> tabs: root.is-text ? ["Text", "Effects", "Animations"]
         : root.is-layer ? ["Filter", "Effects"]
-        : root.is-image ? ["Video", "Effects"]
+        : root.is-image ? ["Video", "Effects", "Animations"]
         : root.is-audio ? ["Audio"]
-        : ["Video", "Audio", "Effects"];
+        : ["Video", "Audio", "Effects", "Animations"];
     /// The same tabs in the interface's language. `tabs` stays English,
     /// because the panels are picked by comparing against it.
-    property <[string]> tabs-shown: root.is-text ? [I18n.t("common.text"), I18n.t("common.effects")]
+    property <[string]> tabs-shown: root.is-text ? [I18n.t("common.text"), I18n.t("common.effects"), I18n.t("configPane.animations")]
         : root.is-layer ? [I18n.t("configPane.filter"), I18n.t("common.effects")]
-        : root.is-image ? [I18n.t("common.video"), I18n.t("common.effects")]
+        : root.is-image ? [I18n.t("common.video"), I18n.t("common.effects"), I18n.t("configPane.animations")]
         : root.is-audio ? [I18n.t("common.audio")]
-        : [I18n.t("common.video"), I18n.t("common.audio"), I18n.t("common.effects")];
+        : [I18n.t("common.video"), I18n.t("common.audio"), I18n.t("common.effects"), I18n.t("configPane.animations")];
     /// A one-segment segmented control is a label wearing a costume, so a lone
     /// tab renders as the panel's plain heading instead.
     property <bool> single: root.tabs.length < 2;
@@ -267,6 +274,7 @@ export component ConfigPane inherits Rectangle {
             ? (root.is-audio ? ["Sound", "Speed"] : ["Sound"])
         : root.heading == "Effects" ? ["Effects"]
         : root.heading == "Text" ? ["Text"]
+        : root.heading == "Animations" ? ["Animations"]
         : ["Layer"];
     /// The sections as the dropdown shows them; see `tabs-shown`.
     property <[string]> sections-shown: root.heading == "Video"
@@ -276,6 +284,7 @@ export component ConfigPane inherits Rectangle {
             ? (root.is-audio ? [I18n.t("configPane.sound"), I18n.t("common.speed")] : [I18n.t("configPane.sound")])
         : root.heading == "Effects" ? [I18n.t("common.effects")]
         : root.heading == "Text" ? [I18n.t("common.text")]
+        : root.heading == "Animations" ? [I18n.t("configPane.animations")]
         : [I18n.t("common.layer")];
 
     // Each tab remembers its own section, so flipping to Audio and back
@@ -309,7 +318,7 @@ export component ConfigPane inherits Rectangle {
         if (root.jump-token == 0) { return; }
         if (root.jump-tab == "Video") { root.tab = 0; }
         else if (root.jump-tab == "Audio") { root.tab = root.is-audio ? 0 : 1; }
-        else if (root.jump-tab == "Effects") { root.tab = root.tabs.length - 1; }
+        else if (root.jump-tab == "Effects") { root.tab = root.is-audio ? 0 : root.is-text || root.is-image || root.is-layer ? 1 : 2; }
         root.pick-section(0);
     }
     changed jump-token => { root.jump(); }
@@ -594,6 +603,15 @@ export component ConfigPane inherits Rectangle {
                     set-colour(field, value) => { root.clip-set-colour(field, value); }
                     commit => { root.clip-commit(); }
                     import-font => { root.import-font(); }
+                }
+
+                if root.showing == "Animations": AnimationsPanel {
+                    selected: root.selected;
+                    presets-in: root.animation-presets-in;
+                    presets-out: root.animation-presets-out;
+                    pick(out, id) => { root.animation-pick(out, id); }
+                    length-set(out, seconds) => { root.animation-length-set(out, seconds); }
+                    replay(out) => { root.animation-replay(out); }
                 }
 
                 // Audio: the level and fades, then the voice and room chain

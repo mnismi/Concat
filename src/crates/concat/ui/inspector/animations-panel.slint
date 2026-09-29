@@ -1,0 +1,177 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme/theme.slint";
+import { Glyph, Icon } from "../icons.slint";
+import { IconButton } from "../primitives/panel.slint";
+import { SegmentedControl } from "../primitives/segmented-control.slint";
+import { Param, ParamFormat, Subhead } from "controls.slint";
+import { SelectedClipData } from "../timeline/model.slint";
+
+/// One preset the Animations tab offers. Published by Rust from
+/// `concat_core::motion::PRESETS`; the id is what comes back on a click,
+/// and it is stable forever because project files store it.
+export struct AnimationPresetData {
+    id: string,
+    name: string,
+    /// On the Effects shelf rather than Basic.
+    effects: bool,
+    /// The card's mark, for a motion preset.
+    glyph: Glyph,
+    /// The card's still, for an effect preset: its effect's own. Empty
+    /// while that is still being drawn.
+    art: image,
+}
+
+// A card in the grid: a mark or a still, and the name under it.
+component AnimationCard inherits Rectangle {
+    in property <string> name;
+    in property <Glyph> glyph;
+    in property <image> art;
+    in property <bool> chosen;
+    callback clicked();
+
+    height: 68px;
+    border-radius: Theme.r-sm;
+    background: touch.has-hover ? Theme.field-hover : Theme.field;
+    border-width: root.chosen ? 2px : 1px;
+    border-color: root.chosen ? Theme.accent : Theme.line;
+
+    VerticalLayout {
+        padding: 6px;
+        spacing: 4px;
+        Rectangle {
+            vertical-stretch: 1;
+            if root.art.width > 0: Image {
+                width: parent.width;
+                height: parent.height;
+                source: root.art;
+                image-fit: cover;
+            }
+            if root.art.width == 0: Icon {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                glyph: root.glyph;
+                size: 20px;
+                tint: root.chosen ? Theme.accent : Theme.fg-muted;
+            }
+        }
+        Text {
+            text: root.name;
+            color: Theme.fg;
+            font-size: Theme.fs-xs;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// A shelf of cards, three to a row, with a None card first when asked.
+component AnimationGrid inherits Rectangle {
+    in property <[AnimationPresetData]> presets;
+    in property <string> chosen;
+    in property <bool> with-none;
+    callback picked(id: string);
+
+    property <int> lead: root.with-none ? 1 : 0;
+    property <int> rows: Math.ceil((root.lead + root.presets.length) / 3);
+    property <length> gap: 6px;
+    property <length> row-h: 74px;
+    property <length> card-w: (root.width - 2 * Theme.pad - 2 * root.gap) / 3;
+
+    height: root.rows * root.row-h;
+
+    if root.with-none: AnimationCard {
+        x: Theme.pad;
+        y: 0;
+        width: root.card-w;
+        name: I18n.t("animations.none");
+        glyph: Glyph.close;
+        chosen: root.chosen == "";
+        clicked => { root.picked(""); }
+    }
+    for preset[index] in root.presets: AnimationCard {
+        x: Theme.pad + Math.mod(index + root.lead, 3) * (root.card-w + root.gap);
+        y: Math.floor((index + root.lead) / 3) * root.row-h;
+        width: root.card-w;
+        name: preset.name;
+        glyph: preset.glyph;
+        art: preset.art;
+        chosen: preset.id == root.chosen;
+        clicked => { root.picked(preset.id); }
+    }
+}
+
+/// The Animations tab: an In | Out switch, the presets for that end on two
+/// shelves, and the length of the one chosen.
+export component AnimationsPanel inherits VerticalLayout {
+    in property <SelectedClipData> selected;
+    in property <[AnimationPresetData]> presets-in;
+    in property <[AnimationPresetData]> presets-out;
+
+    callback pick(out: bool, id: string);
+    callback length-set(out: bool, seconds: float);
+    callback replay(out: bool);
+
+    // Assigned, never bound: the segmented control writes to it.
+    property <int> side;
+    property <bool> out: root.side == 1;
+    property <[AnimationPresetData]> presets: root.out ? root.presets-out : root.presets-in;
+    property <string> chosen: root.out ? root.selected.animation-out-id : root.selected.animation-in-id;
+    // Seeded rather than bound, for the reason given above config-pane's
+    // panels: the Param writes to its own value as it is dragged.
+    property <float> length;
+    function seed() {
+        root.length = root.out ? root.selected.animation-out-length : root.selected.animation-in-length;
+    }
+    init => { root.seed(); }
+    changed selected => { root.seed(); }
+    changed side => { root.seed(); }
+
+    spacing: 8px;
+    padding-top: 8px;
+    padding-bottom: 12px;
+
+    HorizontalLayout {
+        padding-left: Theme.pad;
+        padding-right: Theme.pad;
+        SegmentedControl {
+            options: [I18n.t("animations.in"), I18n.t("animations.out")];
+            current <=> root.side;
+        }
+    }
+
+    Subhead { title: I18n.t("animations.basic"); }
+    AnimationGrid {
+        presets: root.presets;
+        with-none: true;
+        chosen: root.chosen;
+        picked(id) => { root.pick(root.out, id); }
+    }
+
+    // Task 6 adds the Effects shelf here.
+
+    if root.chosen != "": HorizontalLayout {
+        Param {
+            horizontal-stretch: 1;
+            label: I18n.t("common.duration");
+            value <=> root.length;
+            minimum: Math.min(0.1, root.out ? root.selected.animation-out-room : root.selected.animation-in-room);
+            maximum: root.out ? root.selected.animation-out-room : root.selected.animation-in-room;
+            step: 0.05;
+            default-value: 0.5;
+            fmt: ParamFormat.seconds2;
+            changed(v) => { root.length-set(root.out, v); }
+        }
+        IconButton {
+            glyph: Glyph.play;
+            label: I18n.t("animations.replay");
+            clicked => { root.replay(root.out); }
+        }
+    }
+}

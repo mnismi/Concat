@@ -38,9 +38,10 @@ use concat_host::{
     templates,
 };
 use concat_media::{Pyramid, jpeg};
-use concat_project::commands::{ClipMove, ClipPatch, TrackFlag, TrimEdge};
+use concat_project::commands::{AnimationSlot, ClipMove, ClipPatch, TrackFlag, TrimEdge};
 use concat_project::model::{
-    self, AppliedFilter, Clip, Project, TextAlign, TextStyle, Timeline, Track, Transition,
+    self, AppliedFilter, Clip, ClipAnimation, Project, TextAlign, TextStyle, Timeline, Track,
+    Transition,
 };
 use concat_project::{Command, why_not_merge};
 use slint::{Model, ModelRc, SharedString, VecModel};
@@ -126,6 +127,61 @@ impl Strip {
             frame_width: (frame.width() / frames.max(1)) as i32,
             height: frame.height() as i32,
         }
+    }
+}
+
+/// The mark a motion preset's card wears: the direction or the kind of
+/// its movement.
+fn animation_glyph(id: &str) -> Glyph {
+    match id {
+        "fade-in" | "fade-out" => Glyph::Eye,
+        "zoom-in" | "zoom-out" => Glyph::Maximize,
+        "zoom-from-big" | "zoom-to-big" => Glyph::Fit,
+        "slide-from-left" | "slide-to-right" => Glyph::ChevronRight,
+        "slide-from-right" | "slide-to-left" => Glyph::ChevronLeft,
+        "slide-from-top" | "slide-to-bottom" => Glyph::ChevronDown,
+        "slide-from-bottom" | "slide-to-top" | "rise" => Glyph::ChevronUp,
+        "sink" => Glyph::ChevronDown,
+        "spin-in" | "spin-out" => Glyph::Rotate,
+        "pop" | "pop-out" => Glyph::Sparkle,
+        "shake-in" | "shake-out" => Glyph::Waveform,
+        _ => Glyph::Sparkle,
+    }
+}
+
+/// Publishes the Basic grid of each end, named in the current language.
+/// Task 6 adds the Effects grids beside them.
+fn fill_animation_presets(models: &Models) {
+    use crate::panes::animations;
+    use concat_core::motion::Group;
+    use concat_project::commands::AnimationSlot;
+    let art_of = |effect: &str| {
+        models
+            .catalogue_effects
+            .iter()
+            .find(|entry| entry.id == effect)
+            .map(|entry| entry.art)
+            .unwrap_or_default()
+    };
+    for (slot, model) in [
+        (AnimationSlot::In, &models.animation_presets_in),
+        (AnimationSlot::Out, &models.animation_presets_out),
+    ] {
+        let rows: Vec<AnimationPresetData> = animations::offered(slot)
+            .into_iter()
+            .filter(|preset| preset.group == Group::Basic)
+            .map(|preset| AnimationPresetData {
+                id: preset.id.into(),
+                name: crate::i18n::t(preset.label).into(),
+                effects: preset.group == Group::Effects,
+                glyph: animation_glyph(preset.id),
+                art: preset
+                    .effect
+                    .map(|ramp| art_of(ramp.effect))
+                    .unwrap_or_default(),
+            })
+            .collect();
+        model.set_vec(rows);
     }
 }
 
@@ -572,6 +628,10 @@ pub struct Models {
     pub catalogue_filters: Rc<VecModel<CatalogueEntryData>>,
     pub catalogue_audio: Rc<VecModel<CatalogueEntryData>>,
     pub catalogue_transitions: Rc<VecModel<CatalogueEntryData>>,
+    /// The Animations tab's two grids, one per end, in the interface's
+    /// language; see `fill_animation_presets`.
+    pub animation_presets_in: Rc<VecModel<AnimationPresetData>>,
+    pub animation_presets_out: Rc<VecModel<AnimationPresetData>>,
     pub effect_groups: Rc<VecModel<SharedString>>,
     pub filter_groups: Rc<VecModel<SharedString>>,
     pub audio_groups: Rc<VecModel<SharedString>>,
@@ -652,6 +712,8 @@ impl Models {
             catalogue_filters: Rc::new(VecModel::default()),
             catalogue_audio: Rc::new(VecModel::default()),
             catalogue_transitions: Rc::new(VecModel::default()),
+            animation_presets_in: Rc::new(VecModel::default()),
+            animation_presets_out: Rc::new(VecModel::default()),
             effect_groups: Rc::new(VecModel::default()),
             filter_groups: Rc::new(VecModel::default()),
             audio_groups: Rc::new(VecModel::default()),
@@ -771,6 +833,9 @@ pub struct Studio {
     pub selection: Vec<String>,
     pub playhead: f32,
     pub playing: bool,
+    /// Where playback stops by itself, when a preview asked for a stretch
+    /// rather than the rest of the timeline.
+    stop_at: Option<f32>,
     transport: slint::Timer,
     /// The preview axis: the instant under the pointer while it crosses the
     /// lanes, which the monitor shows instead of the playhead's. None when
@@ -2024,6 +2089,7 @@ impl Studio {
             playhead: 0.0,
             // ~20px a second: a ten-second cut fits a pane at its default width.
             playing: false,
+            stop_at: None,
             transport: slint::Timer::default(),
             hover: None,
             hover_hush: slint::Timer::default(),
@@ -2610,7 +2676,9 @@ impl Studio {
                 crate::host::Shell::with(|shell, app| {
                     {
                         let mut studio = shell.studio.borrow_mut();
-                        let end = studio.duration();
+                        let end = studio
+                            .stop_at
+                            .map_or(studio.duration(), |stop| stop.min(studio.duration()));
                         let position = studio.host.playback.position() as f32;
                         studio.playhead = position.min(end);
                         // The view follows: a playhead that runs off the
@@ -2646,6 +2714,7 @@ impl Studio {
 
     pub fn pause(&mut self) {
         self.playing = false;
+        self.stop_at = None;
         self.transport.stop();
         self.host.playback.pause();
     }
@@ -3496,6 +3565,84 @@ impl Studio {
                 ..ClipPatch::default()
             },
         });
+    }
+
+    /// Picks `id` for one end of the selected clip, or clears that end for
+    /// an empty id, then plays that end in the viewer so the pick is seen
+    /// at once. An end that had a preset keeps its length.
+    pub fn pick_animation(&mut self, slot: AnimationSlot, id: &str) {
+        use crate::panes::animations;
+        let Some(clip_id) = self.sole_selection() else {
+            return;
+        };
+        let Some(clip) = self.clip(&clip_id).cloned() else {
+            return;
+        };
+        let animation = (!id.is_empty()).then(|| ClipAnimation {
+            id: id.to_owned(),
+            duration: animations::starting_length(&clip, slot),
+        });
+        let picked = animation.is_some();
+        self.apply(Command::SetClipAnimation {
+            clip_id: clip_id.clone(),
+            slot,
+            animation,
+        });
+        if picked {
+            self.replay_animation(slot);
+        }
+    }
+
+    /// Sets the length of one end of the selected clip's animation, as one
+    /// move of the slider's gesture, so a drag is one undo step.
+    pub fn set_animation_length(&mut self, slot: AnimationSlot, seconds: f64) {
+        let Some(clip_id) = self.sole_selection() else {
+            return;
+        };
+        let Some(current) = self
+            .clip(&clip_id)
+            .and_then(|clip| crate::panes::animations::current(clip, slot).cloned())
+        else {
+            return;
+        };
+        let gesture = format!("animation-{clip_id}-{slot:?}");
+        self.apply_within(
+            &gesture,
+            Command::SetClipAnimation {
+                clip_id,
+                slot,
+                animation: Some(ClipAnimation {
+                    duration: seconds,
+                    ..current
+                }),
+            },
+        );
+    }
+
+    /// Plays the selected clip's animation on one end in the viewer.
+    pub fn replay_animation(&mut self, slot: AnimationSlot) {
+        use crate::panes::animations;
+        let Some(clip_id) = self.sole_selection() else {
+            return;
+        };
+        let Some(clip) = self.clip(&clip_id).cloned() else {
+            return;
+        };
+        let Some(seconds) = animations::current(&clip, slot).map(|a| a.duration) else {
+            return;
+        };
+        let (from, to) = animations::preview_window(&clip, slot, seconds);
+        self.play_window(from as f32, to as f32);
+    }
+
+    /// Plays `from..to` of the timeline in the viewer and stops at `to`.
+    pub fn play_window(&mut self, from: f32, to: f32) {
+        if self.playing {
+            self.pause();
+        }
+        self.seek(from.max(0.0));
+        self.play_toggle();
+        self.stop_at = Some(to);
     }
 
     /// Sets the selected clip's transition to `seconds`, clamped to what
@@ -6390,6 +6537,7 @@ impl Studio {
                 offset_y: Some(source.offset_y),
             });
             if let Some(id) = created {
+                self.copy_animations(source, &id);
                 self.selection = vec![id];
             }
             return;
@@ -6438,8 +6586,36 @@ impl Studio {
                 ..ClipPatch::default()
             },
         });
+        for (slot, animation) in [
+            (AnimationSlot::In, &source.animation_in),
+            (AnimationSlot::Out, &source.animation_out),
+        ] {
+            if animation.is_some() {
+                commands.push(Command::SetClipAnimation {
+                    clip_id: created.clone(),
+                    slot,
+                    animation: animation.clone(),
+                });
+            }
+        }
         self.apply(Command::Batch { commands });
         self.selection = vec![created];
+    }
+
+    /// Gives `to` the animations `from` has.
+    fn copy_animations(&mut self, from: &Clip, to: &str) {
+        for (slot, animation) in [
+            (AnimationSlot::In, &from.animation_in),
+            (AnimationSlot::Out, &from.animation_out),
+        ] {
+            if animation.is_some() {
+                self.apply(Command::SetClipAnimation {
+                    clip_id: to.to_owned(),
+                    slot,
+                    animation: animation.clone(),
+                });
+            }
+        }
     }
 
     /// What the tray's sound and word tools may do to the selection: one
@@ -7173,6 +7349,14 @@ impl Studio {
                             .as_ref()
                             .map(|transition| transition.duration as f32)
                             .unwrap_or(0.0),
+                        animation_in: clip
+                            .animation_in
+                            .as_ref()
+                            .map_or(0.0, |animation| animation.duration as f32),
+                        animation_out: clip
+                            .animation_out
+                            .as_ref()
+                            .map_or(0.0, |animation| animation.duration as f32),
                         fade_in: clip.fade_in as f32,
                         fade_out: clip.fade_out as f32,
                         volume: clip.volume as f32,
@@ -8412,6 +8596,28 @@ impl Studio {
                 .as_ref()
                 .map(|transition| transition.duration as f32)
                 .unwrap_or(0.5),
+            animation_in_id: clip
+                .animation_in
+                .as_ref()
+                .map(|animation| animation.id.as_str())
+                .unwrap_or_default()
+                .into(),
+            animation_in_length: clip
+                .animation_in
+                .as_ref()
+                .map_or(0.5, |animation| animation.duration as f32),
+            animation_in_room: crate::panes::animations::room(clip, AnimationSlot::In) as f32,
+            animation_out_id: clip
+                .animation_out
+                .as_ref()
+                .map(|animation| animation.id.as_str())
+                .unwrap_or_default()
+                .into(),
+            animation_out_length: clip
+                .animation_out
+                .as_ref()
+                .map_or(0.5, |animation| animation.duration as f32),
+            animation_out_room: crate::panes::animations::room(clip, AnimationSlot::Out) as f32,
             scale: shown(clip, model::KeyProperty::Scale, at) as f32,
             offset_x: shown(clip, model::KeyProperty::OffsetX, at) as f32,
             offset_y: shown(clip, model::KeyProperty::OffsetY, at) as f32,
@@ -8700,6 +8906,7 @@ impl Studio {
             );
             sync(&models.transition_groups, groups);
             sync(&models.catalogue_transitions, entries);
+            fill_animation_presets(models);
             *self.shelf_stamp.borrow_mut() = Some(stamp);
         }
         sync(

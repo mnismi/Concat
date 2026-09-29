@@ -255,6 +255,11 @@ export component Seat inherits Rectangle {
             cutout-clear => { Editor.cutout-clear(); }
             transition-remove => { Editor.transition-remove(); }
             transition-duration-set(seconds) => { Editor.transition-duration-set(seconds); }
+            animation-presets-in: Editor.animation-presets-in;
+            animation-presets-out: Editor.animation-presets-out;
+            animation-pick(out, id) => { Editor.animation-pick(out, id); }
+            animation-length-set(out, seconds) => { Editor.animation-length-set(out, seconds); }
+            animation-replay(out) => { Editor.animation-replay(out); }
 
             project-name: Editor.project-name;
             project-folder: Editor.project-folder;
