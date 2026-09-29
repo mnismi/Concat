@@ -3146,7 +3146,9 @@ impl Studio {
 
     /// The waveform of the sound `clip` plays, when it has been read.
     pub(crate) fn peaks_of(&self, clip: &Clip) -> Option<Arc<Pyramid>> {
-        self.peaks.get(&art_key(&clip.media_id, clip.audio_stream)).cloned()
+        self.peaks
+            .get(&art_key(&clip.media_id, clip.audio_stream))
+            .cloned()
     }
 
     // ── placing things ──

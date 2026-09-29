@@ -36,7 +36,9 @@ pub use model::Project;
 mod tests {
     use serde_json::json;
 
-    use crate::commands::{ClipMove, ClipPatch, Command, CommandError, NewMedia, TrackFlag, TrimEdge};
+    use crate::commands::{
+        ClipMove, ClipPatch, Command, CommandError, NewMedia, TrackFlag, TrimEdge,
+    };
     use crate::doc::DocumentSettings;
     use crate::editor::Editor;
     use crate::model::{
@@ -421,7 +423,13 @@ mod tests {
             .clips
             .iter()
             .filter(|clip| clip.track_id == track_id)
-            .map(|clip| (round(clip.start), round(clip.duration), round(clip.source_start)))
+            .map(|clip| {
+                (
+                    round(clip.start),
+                    round(clip.duration),
+                    round(clip.source_start),
+                )
+            })
             .collect();
         out.sort_by(|a, b| a.0.total_cmp(&b.0));
         out
@@ -448,11 +456,20 @@ mod tests {
         assert!(outcome.applied);
         assert_eq!(
             pieces(&editor, &video),
-            vec![(0.0, 2.0, 0.0), (2.0, 2.0, 3.0), (4.0, 3.0, 7.0), (7.0, 10.0, 0.0)],
+            vec![
+                (0.0, 2.0, 0.0),
+                (2.0, 2.0, 3.0),
+                (4.0, 3.0, 7.0),
+                (7.0, 10.0, 0.0)
+            ],
             "three pieces, and the clip after them pulled left by 3 s"
         );
         assert_eq!(start_of(&editor, &after[0]), 7.0);
-        assert_eq!(start_of(&editor, &elsewhere[0]), 15.0, "another track stays");
+        assert_eq!(
+            start_of(&editor, &elsewhere[0]),
+            15.0,
+            "another track stays"
+        );
     }
 
     #[test]
@@ -475,7 +492,9 @@ mod tests {
         let (mut editor, _, clip) = fixture();
         let (video, sound_track) = tracks(&editor);
         editor
-            .apply(Command::DetachAudio { clip_id: clip.clone() })
+            .apply(Command::DetachAudio {
+                clip_id: clip.clone(),
+            })
             .expect("detaches");
         editor
             .apply(Command::RemoveClipRanges {
@@ -493,7 +512,9 @@ mod tests {
         let (mut editor, _, clip) = fixture();
         let (video, sound_track) = tracks(&editor);
         editor
-            .apply(Command::DetachAudio { clip_id: clip.clone() })
+            .apply(Command::DetachAudio {
+                clip_id: clip.clone(),
+            })
             .expect("detaches");
         let sound = editor
             .project()
@@ -534,7 +555,11 @@ mod tests {
             .expect("speeds up");
         // Now 4 s at 2x showing source 2..10 from timeline 2.
         let placed = pieces(&editor, &video);
-        assert_eq!(placed, vec![(2.0, 4.0, 2.0)], "the set-up is what this test thinks");
+        assert_eq!(
+            placed,
+            vec![(2.0, 4.0, 2.0)],
+            "the set-up is what this test thinks"
+        );
         editor
             .apply(Command::RemoveClipRanges {
                 clip_id: clip,
@@ -542,7 +567,10 @@ mod tests {
             })
             .expect("cuts");
         // Source 4..6 is timeline 3..4.
-        assert_eq!(pieces(&editor, &video), vec![(2.0, 1.0, 2.0), (3.0, 2.0, 6.0)]);
+        assert_eq!(
+            pieces(&editor, &video),
+            vec![(2.0, 1.0, 2.0), (3.0, 2.0, 6.0)]
+        );
     }
 
     #[test]
@@ -594,7 +622,10 @@ mod tests {
                 ranges: vec![(2.0, 3.0), (3.01, 4.0), (9.0, 9.99)],
             })
             .expect("cuts");
-        assert_eq!(pieces(&editor, &video), vec![(0.0, 2.0, 0.0), (2.0, 5.0, 4.0)]);
+        assert_eq!(
+            pieces(&editor, &video),
+            vec![(0.0, 2.0, 0.0), (2.0, 5.0, 4.0)]
+        );
     }
 
     #[test]
@@ -618,7 +649,12 @@ mod tests {
             .expect("cuts both");
         assert_eq!(
             pieces(&editor, &video),
-            vec![(0.0, 2.0, 0.0), (2.0, 7.0, 3.0), (9.0, 2.0, 0.0), (11.0, 7.0, 3.0)]
+            vec![
+                (0.0, 2.0, 0.0),
+                (2.0, 7.0, 3.0),
+                (9.0, 2.0, 0.0),
+                (11.0, 7.0, 3.0)
+            ]
         );
     }
 
@@ -650,8 +686,14 @@ mod tests {
             .apply(Command::SetClipSpeedCurve {
                 clip_id: clip.clone(),
                 curve: Some(vec![
-                    crate::model::SpeedPoint { at: 0.0, speed: 1.0 },
-                    crate::model::SpeedPoint { at: 1.0, speed: 2.0 },
+                    crate::model::SpeedPoint {
+                        at: 0.0,
+                        speed: 1.0,
+                    },
+                    crate::model::SpeedPoint {
+                        at: 1.0,
+                        speed: 2.0,
+                    },
                 ]),
             })
             .expect("curves");
@@ -706,7 +748,9 @@ mod tests {
         let (mut editor, _, clip) = fixture();
         let (video, sound_track) = tracks(&editor);
         editor
-            .apply(Command::DetachAudio { clip_id: clip.clone() })
+            .apply(Command::DetachAudio {
+                clip_id: clip.clone(),
+            })
             .expect("detaches");
         editor
             .apply(Command::RemoveClipRanges {
@@ -735,7 +779,12 @@ mod tests {
                 ranges: vec![(7.0, 8.0)],
             })
             .expect("cuts a third time");
-        let expected = vec![(0.0, 2.0, 0.0), (2.0, 2.0, 3.0), (4.0, 1.0, 6.0), (5.0, 2.0, 8.0)];
+        let expected = vec![
+            (0.0, 2.0, 0.0),
+            (2.0, 2.0, 3.0),
+            (4.0, 1.0, 6.0),
+            (5.0, 2.0, 8.0),
+        ];
         assert_eq!(pieces(&editor, &video), expected);
         assert_eq!(pieces(&editor, &sound_track), expected);
     }
@@ -745,7 +794,9 @@ mod tests {
         let (mut editor, _, clip) = fixture();
         let (video, sound_track) = tracks(&editor);
         editor
-            .apply(Command::DetachAudio { clip_id: clip.clone() })
+            .apply(Command::DetachAudio {
+                clip_id: clip.clone(),
+            })
             .expect("detaches");
         // The sound leads the picture in by two seconds.
         editor
@@ -763,7 +814,10 @@ mod tests {
                 ranges: vec![(0.5, 1.5), (5.0, 6.0)],
             })
             .expect("cuts");
-        assert_eq!(pieces(&editor, &video), vec![(2.0, 3.0, 2.0), (5.0, 4.0, 6.0)]);
+        assert_eq!(
+            pieces(&editor, &video),
+            vec![(2.0, 3.0, 2.0), (5.0, 4.0, 6.0)]
+        );
         assert_eq!(
             pieces(&editor, &sound_track),
             vec![(0.0, 5.0, 0.0), (5.0, 4.0, 6.0)],
@@ -776,7 +830,9 @@ mod tests {
         let (mut editor, _, clip) = fixture();
         let (video, sound_track) = tracks(&editor);
         editor
-            .apply(Command::DetachAudio { clip_id: clip.clone() })
+            .apply(Command::DetachAudio {
+                clip_id: clip.clone(),
+            })
             .expect("detaches");
         let sound = piece_at(&editor, &sound_track, 0.0);
         editor
@@ -796,7 +852,12 @@ mod tests {
             .expect("cuts");
         assert_eq!(
             pieces(&editor, &video),
-            vec![(0.0, 2.0, 0.0), (2.0, 7.0, 3.0), (11.0, 2.0, 0.0), (13.0, 7.0, 3.0)]
+            vec![
+                (0.0, 2.0, 0.0),
+                (2.0, 7.0, 3.0),
+                (11.0, 2.0, 0.0),
+                (13.0, 7.0, 3.0)
+            ]
         );
     }
 
@@ -853,7 +914,9 @@ mod tests {
             .created_id
             .expect("id");
         editor
-            .apply(Command::DetachAudio { clip_id: video.clone() })
+            .apply(Command::DetachAudio {
+                clip_id: video.clone(),
+            })
             .expect("detaches");
         let sounds: Vec<String> = editor
             .project()
@@ -870,8 +933,14 @@ mod tests {
         };
         let everything = sorted(vec![video.clone(), sounds[0].clone(), sounds[1].clone()]);
         let timeline = editor.project().active();
-        assert_eq!(sorted(crate::commands::cut_group(timeline, &video)), everything);
-        assert_eq!(sorted(crate::commands::cut_group(timeline, &sounds[1])), everything);
+        assert_eq!(
+            sorted(crate::commands::cut_group(timeline, &video)),
+            everything
+        );
+        assert_eq!(
+            sorted(crate::commands::cut_group(timeline, &sounds[1])),
+            everything
+        );
         assert!(crate::commands::cut_group(timeline, "nope").is_empty());
 
         // With the picture gone, the two sounds still go together.

@@ -103,12 +103,10 @@ pub fn plan(subjects: &[Subject], settings: &SilenceSettings) -> Plan {
         };
         let heard = &subject.heard;
         // Only what every member shows, as the cut takes it.
-        let windows = subject.members.iter().chain(
-            subject
-                .members
-                .is_empty()
-                .then_some(heard),
-        );
+        let windows = subject
+            .members
+            .iter()
+            .chain(subject.members.is_empty().then_some(heard));
         let (from, to) = windows.fold((f64::NEG_INFINITY, f64::INFINITY), |(from, to), clip| {
             (
                 from.max(clip.source_start),
@@ -276,7 +274,10 @@ impl SilencePane {
                     .cloned()
                     .collect();
                 studio.selection = alive;
-                studio.notify(&tf("silence.removedPauses", &[&pauses, &clock(removed)]), false);
+                studio.notify(
+                    &tf("silence.removedPauses", &[&pauses, &clock(removed)]),
+                    false,
+                );
             }
         }
     }
@@ -296,7 +297,10 @@ impl SilencePane {
         let summary = if plan.whole {
             t("silence.wholeClipBelowLevel")
         } else if plan.before == 0.0 {
-            plan.skipped.first().map(|skip| reason(*skip)).unwrap_or_default()
+            plan.skipped
+                .first()
+                .map(|skip| reason(*skip))
+                .unwrap_or_default()
         } else if plan.commands.is_empty() {
             t("silence.noPausesFound")
         } else {
@@ -311,9 +315,10 @@ impl SilencePane {
             )
         };
         let skipped = match plan.skipped.first() {
-            Some(skip) if plan.before > 0.0 => {
-                tf("silence.clipsSkipped", &[&plan.skipped.len(), &reason(*skip)])
-            }
+            Some(skip) if plan.before > 0.0 => tf(
+                "silence.clipsSkipped",
+                &[&plan.skipped.len(), &reason(*skip)],
+            ),
             _ => String::new(),
         };
         SilenceSheetData {
@@ -456,7 +461,13 @@ mod tests {
     /// A second of speech, a second of quiet, a second of speech, at a
     /// thousand buckets a second.
     fn speech_pause_speech() -> Arc<Pyramid> {
-        let amplitude = |index: usize| if (1000..2000).contains(&index) { 0.0 } else { 0.5 };
+        let amplitude = |index: usize| {
+            if (1000..2000).contains(&index) {
+                0.0
+            } else {
+                0.5
+            }
+        };
         let max: Vec<f32> = (0..3000).map(amplitude).collect();
         let min = max.iter().map(|value| -value).collect();
         Arc::new(Pyramid::of(Peaks {
@@ -496,7 +507,11 @@ mod tests {
         }
         assert_eq!(plan.shades.len(), 2);
         assert_eq!(plan.shades[0].0, 0);
-        assert!((plan.shades[0].1 - 11.105).abs() < 0.011, "{:?}", plan.shades);
+        assert!(
+            (plan.shades[0].1 - 11.105).abs() < 0.011,
+            "{:?}",
+            plan.shades
+        );
         assert!((plan.removed - 0.79).abs() < 0.02);
         assert_eq!(plan.before, 3.0);
         assert!(!plan.whole);
@@ -561,10 +576,16 @@ mod tests {
             };
             ids.iter().map(|id| (*id).to_owned()).collect()
         };
-        let selection: Vec<String> = ["s", "v", "m", "gone", "o1", "o2"].map(String::from).to_vec();
+        let selection: Vec<String> = ["s", "v", "m", "gone", "o1", "o2"]
+            .map(String::from)
+            .to_vec();
         let named: Vec<(String, Vec<String>)> = leaders(&selection, group_of);
         let names: Vec<&str> = named.iter().map(|(id, _)| id.as_str()).collect();
-        assert_eq!(names, vec!["s", "m", "o1"], "each group once, named as selected");
+        assert_eq!(
+            names,
+            vec!["s", "m", "o1"],
+            "each group once, named as selected"
+        );
         assert_eq!(named[0].1, vec!["s", "v"]);
     }
 
@@ -582,7 +603,10 @@ mod tests {
             peaks: Ok(vec![speech_pause_speech(), talking]),
         };
         let plan = plan(&[subject], &SilenceSettings::default());
-        assert!(plan.commands.is_empty(), "the second stream talks through the pause");
+        assert!(
+            plan.commands.is_empty(),
+            "the second stream talks through the pause"
+        );
         assert_eq!(plan.pauses, 0);
     }
 
@@ -613,7 +637,11 @@ mod tests {
             }
             other => panic!("one cut, not {other:?}"),
         }
-        assert!(plan.shades.iter().all(|(_, start, _)| *start >= 1.5 - 1e-9), "{:?}", plan.shades);
+        assert!(
+            plan.shades.iter().all(|(_, start, _)| *start >= 1.5 - 1e-9),
+            "{:?}",
+            plan.shades
+        );
     }
 
     #[test]

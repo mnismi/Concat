@@ -71,7 +71,9 @@ pub fn find_silences(
 
     // Loud where the hold's loudest bucket reaches the level: a running
     // count of raw loud buckets, so each point asks its window in O(1).
-    let raw: Vec<bool> = (first..last).map(|index| amplitude(index) >= threshold).collect();
+    let raw: Vec<bool> = (first..last)
+        .map(|index| amplitude(index) >= threshold)
+        .collect();
     let n = raw.len();
     let mut count = vec![0usize; n + 1];
     for (index, loud) in raw.iter().enumerate() {
@@ -276,6 +278,9 @@ mod tests {
             "{:?} for an hour",
             started.elapsed()
         );
-        assert!(spans.is_empty(), "0.5 s pauses less the hold stay under the minimum");
+        assert!(
+            spans.is_empty(),
+            "0.5 s pauses less the hold stay under the minimum"
+        );
     }
 }

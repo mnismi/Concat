@@ -728,7 +728,10 @@ fn removing_silences_leaves_only_the_sound() {
     });
     let exported = studio.export_at("silences removed", None);
     let seconds = exported.frames.len() as f64 / exported.fps;
-    assert!((seconds - 3.0).abs() < 0.1, "three seconds of tone, not {seconds}s");
+    assert!(
+        (seconds - 3.0).abs() < 0.1,
+        "three seconds of tone, not {seconds}s"
+    );
     exported.expect_tone(0.5);
     exported.expect_tone(1.5);
     exported.expect_tone(2.5);

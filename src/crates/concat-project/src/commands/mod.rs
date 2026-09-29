@@ -22,8 +22,8 @@ mod audio;
 mod clips;
 mod cut;
 
-pub use cut::cut_group;
 pub use clips::why_not_merge;
+pub use cut::cut_group;
 mod media;
 mod properties;
 mod timelines;
