@@ -529,6 +529,123 @@ pub fn expand_pieces<'a>(project: &'a Project, timeline_id: Option<&str>) -> Cow
     Cow::Owned(owned)
 }
 
+/// What saving a selection as a piece produces: the piece, with no id yet,
+/// and the bin items and fonts it uses, still at their paths in the
+/// project. The host copies those into the library bundle.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Selection {
+    /// The piece, with no id until the project it lands in mints one.
+    pub piece: Piece,
+    /// The bin items its clips name, by the ids its clips use.
+    pub media: Vec<MediaItem>,
+    /// Fonts its titles use.
+    pub fonts: Vec<crate::model::CustomFont>,
+}
+
+/// Why a selection cannot become a piece. Each renders as the sentence the
+/// window shows.
+#[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
+pub enum SelectionError {
+    /// Nothing selected, or nothing that is still there.
+    #[error("Select the clips to save as a piece first.")]
+    Empty,
+    /// A template slot is a stand-in, not part of a design.
+    #[error("A template slot can't go into a piece.")]
+    Slot,
+}
+
+/// The clips `clip_ids` names on the active timeline, made into a piece
+/// called `name`. Pieces among them are opened up first, so a piece never
+/// holds a piece. The earliest start becomes zero and each track the
+/// selection touches becomes a lane, top to bottom.
+pub fn from_selection(
+    project: &Project,
+    clip_ids: &[String],
+    name: &str,
+) -> Result<Selection, SelectionError> {
+    let chosen: std::collections::HashSet<&str> = clip_ids.iter().map(String::as_str).collect();
+    let expanded = expand_pieces(project, None);
+    let timeline = expanded.active();
+    let owner = |id: &str| id.split_once('/').map_or(id, |(owner, _)| owner).to_owned();
+    let picked: Vec<&Clip> = timeline
+        .clips
+        .iter()
+        .map(Arc::as_ref)
+        .filter(|clip| chosen.contains(owner(&clip.id).as_str()))
+        .collect();
+    if picked.is_empty() {
+        return Err(SelectionError::Empty);
+    }
+    let media: Vec<MediaItem> = project
+        .media
+        .iter()
+        .filter(|item| picked.iter().any(|clip| clip.media_id == item.id))
+        .cloned()
+        .collect();
+    if media.iter().any(|item| item.placeholder) {
+        return Err(SelectionError::Slot);
+    }
+    let zero = picked
+        .iter()
+        .map(|clip| clip.start)
+        .fold(f64::INFINITY, f64::min);
+    let end = picked
+        .iter()
+        .map(|clip| clip.start + clip.duration)
+        .fold(0.0, f64::max);
+    let lanes: Vec<PieceLane> = timeline
+        .tracks
+        .iter()
+        .filter_map(|track| {
+            let clips: Vec<Clip> = picked
+                .iter()
+                .filter(|clip| clip.track_id == track.id)
+                .map(|clip| {
+                    let mut clip = (*clip).clone();
+                    clip.start -= zero;
+                    clip.track_id.clear();
+                    clip
+                })
+                .collect();
+            (!clips.is_empty()).then(|| PieceLane {
+                clips,
+                ..PieceLane::default()
+            })
+        })
+        .collect();
+    let families: Vec<&str> = picked
+        .iter()
+        .filter_map(|clip| clip.text.as_ref())
+        .map(|style| style.font_family.as_str())
+        .collect();
+    let fonts = project
+        .fonts
+        .iter()
+        .filter(|font| {
+            families
+                .iter()
+                .any(|family| family.contains(font.family.as_str()))
+        })
+        .cloned()
+        .collect();
+    let video = &project.active().video;
+    let hold = compute_hold(&lanes);
+    Ok(Selection {
+        piece: Piece {
+            id: String::new(),
+            name: name.to_owned(),
+            design_width: video.width,
+            design_height: video.height,
+            duration: (end - zero).max(MIN_CLIP_DURATION),
+            hold,
+            lanes,
+            ..Piece::default()
+        },
+        media,
+        fonts,
+    })
+}
+
 /// Shared by the tests here and in `commands`; not every test uses all.
 #[cfg(test)]
 #[allow(dead_code)]
@@ -992,5 +1109,98 @@ mod tests {
         let expanded = expand_pieces(&project, None);
         assert!(expanded.active().clips.is_empty());
         assert_eq!(expanded.active().tracks.len(), 4);
+    }
+
+    fn editor_with_a_hand_and_a_title() -> (crate::Editor, Vec<String>) {
+        use crate::commands::Command;
+        let mut editor = crate::Editor::new();
+        let media = editor
+            .apply(Command::AddMedia {
+                item: crate::commands::NewMedia {
+                    path: "/hand.png".to_owned(),
+                    name: "hand.png".to_owned(),
+                    duration: None,
+                    kind: crate::model::MediaKind::Image,
+                    width: Some(400),
+                    height: Some(400),
+                    frame_rate: None,
+                    frame_rate_fraction: None,
+                    video_codec: None,
+                    audio_codec: None,
+                    has_audio: false,
+                    audio_tracks: Vec::new(),
+                    origin: None,
+                    color_space: Default::default(),
+                },
+            })
+            .expect("adds")
+            .created_id
+            .expect("id");
+        let hand = editor
+            .apply(Command::AddClip {
+                media_id: media,
+                track_id: "T1".to_owned(),
+                start: 4.0,
+                ripple: false,
+            })
+            .expect("adds")
+            .created_id
+            .expect("id");
+        let words = editor
+            .apply(Command::AddTextClip {
+                track_id: Some("T3".to_owned()),
+                above: false,
+                start: 5.0,
+                style: None,
+                duration: Some(2.0),
+                offset_y: None,
+            })
+            .expect("adds")
+            .created_id
+            .expect("id");
+        (editor, vec![hand, words])
+    }
+
+    #[test]
+    fn a_selection_starts_at_zero_with_a_lane_per_track_touched() {
+        let (editor, ids) = editor_with_a_hand_and_a_title();
+        let made = from_selection(editor.project(), &ids, "Point").expect("saves");
+        let piece = made.piece;
+        assert_eq!(piece.name, "Point");
+        assert_eq!((piece.design_width, piece.design_height), (1920, 1080));
+        assert!(close(piece.duration, 5.0), "4 s to 9 s");
+        assert_eq!(piece.lanes.len(), 2, "T1 and T3; T2 is empty");
+        // Lanes run top to bottom, as the timeline's tracks do.
+        assert_eq!(piece.lanes[0].clips[0].kind, ClipKind::Image);
+        assert!(close(piece.lanes[0].clips[0].start, 0.0));
+        assert!(close(piece.lanes[1].clips[0].start, 1.0));
+        assert!(
+            piece
+                .lanes
+                .iter()
+                .flat_map(|lane| &lane.clips)
+                .all(|clip| clip.track_id.is_empty())
+        );
+        assert_eq!(made.media.len(), 1);
+    }
+
+    #[test]
+    fn nothing_or_a_slot_cannot_be_saved() {
+        let (mut editor, ids) = editor_with_a_hand_and_a_title();
+        assert_eq!(
+            from_selection(editor.project(), &[], "x").unwrap_err(),
+            SelectionError::Empty
+        );
+        let media = editor.project().media[0].id.clone();
+        editor
+            .apply(crate::commands::Command::SetMediaPlaceholder {
+                media_id: media,
+                placeholder: true,
+            })
+            .expect("marks");
+        assert_eq!(
+            from_selection(editor.project(), &ids, "x").unwrap_err(),
+            SelectionError::Slot
+        );
     }
 }
