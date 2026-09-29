@@ -21,6 +21,8 @@ use crate::model::{
 mod audio;
 mod clips;
 mod cut;
+
+pub use cut::cut_group;
 pub use clips::why_not_merge;
 mod media;
 mod properties;

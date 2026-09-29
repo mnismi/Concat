@@ -66,8 +66,9 @@ pub struct Subject {
     pub heard: Placement,
     /// Every clip the cut lands on: where the shading goes.
     pub members: Vec<Placement>,
-    /// The heard clip's waveform, or why there is none to read.
-    pub peaks: Result<Arc<Pyramid>, Skip>,
+    /// The waveform of every sound the cut lands on, one per stream, or
+    /// why there is none to read.
+    pub peaks: Result<Vec<Arc<Pyramid>>, Skip>,
 }
 
 /// What the settings find over every subject.
@@ -101,9 +102,29 @@ pub fn plan(subjects: &[Subject], settings: &SilenceSettings) -> Plan {
             }
         };
         let heard = &subject.heard;
-        let from = heard.source_start;
-        let to = heard.source_start + heard.duration * heard.speed;
-        let ranges = find_silences(peaks.finest(), from, to, settings);
+        // Only what every member shows, as the cut takes it.
+        let windows = subject.members.iter().chain(
+            subject
+                .members
+                .is_empty()
+                .then_some(heard),
+        );
+        let (from, to) = windows.fold((f64::NEG_INFINITY, f64::INFINITY), |(from, to), clip| {
+            (
+                from.max(clip.source_start),
+                to.min(clip.source_start + clip.duration * clip.speed),
+            )
+        });
+        if to <= from {
+            continue;
+        }
+        // A pause is quiet on every stream: a second microphone talking
+        // through it keeps it.
+        let ranges = peaks
+            .iter()
+            .map(|peaks| find_silences(peaks.finest(), from, to, settings))
+            .reduce(|a, b| both(&a, &b))
+            .unwrap_or_default();
         let removed: f64 = ranges.iter().map(|(a, b)| (b - a) / heard.speed).sum();
         plan.before += heard.duration;
         plan.removed += removed;
@@ -142,24 +163,44 @@ pub fn clock(seconds: f64) -> String {
     }
 }
 
-/// One id per selected group, in selection order: a video and the sounds
-/// detached from it are one group, named by the video, or by the sound
-/// when its video is gone. `clips` is every clip as `(id, detached_from)`.
-pub fn leaders(clips: &[(String, Option<String>)], selection: &[String]) -> Vec<String> {
-    let exists = |id: &str| clips.iter().any(|(other, _)| other == id);
-    let mut seen = HashSet::new();
+/// The spans `a` and `b` share. Both sorted and disjoint.
+fn both(a: &[(f64, f64)], b: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let (mut i, mut j) = (0, 0);
+    let mut out = Vec::new();
+    while i < a.len() && j < b.len() {
+        let (from, to) = (a[i].0.max(b[j].0), a[i].1.min(b[j].1));
+        if to > from {
+            out.push((from, to));
+        }
+        if a[i].1 < b[j].1 {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
+}
+
+/// One cut per selected group, in selection order, named by the first of
+/// it selected: `group_of` gives what a cut of an id lands on
+/// ([`concat_project::commands::cut_group`]), and a group already named
+/// is not named again, so a video and its detached sound are cut once.
+pub fn leaders(
+    selection: &[String],
+    group_of: impl Fn(&str) -> Vec<String>,
+) -> Vec<(String, Vec<String>)> {
+    let mut covered = HashSet::new();
     let mut out = Vec::new();
     for id in selection {
-        let Some((_, detached_from)) = clips.iter().find(|(other, _)| other == id) else {
+        if covered.contains(id) {
             continue;
-        };
-        let leader = match detached_from {
-            Some(video) if exists(video) => video.clone(),
-            _ => id.clone(),
-        };
-        if seen.insert(leader.clone()) {
-            out.push(leader);
         }
+        let group = group_of(id);
+        if group.is_empty() {
+            continue;
+        }
+        covered.extend(group.iter().cloned());
+        out.push((id.clone(), group));
     }
     out
 }
@@ -332,59 +373,54 @@ pub fn blocked(studio: &Studio) -> Option<String> {
 /// The selection as subjects: one per video-and-sound group.
 fn subjects(studio: &Studio, selection: &[String]) -> Vec<Subject> {
     let timeline = studio.timeline();
-    let links: Vec<(String, Option<String>)> = timeline
-        .clips
-        .iter()
-        .map(|clip| (clip.id.clone(), clip.detached_from.clone()))
-        .collect();
-    leaders(&links, selection)
-        .into_iter()
-        .filter_map(|leader| {
-            let group: Vec<&Clip> = timeline
-                .clips
+    leaders(selection, |id| {
+        concat_project::commands::cut_group(timeline, id)
+    })
+    .into_iter()
+    .filter_map(|(leader, ids)| {
+        let group: Vec<&Clip> = ids.iter().filter_map(|id| studio.clip(id)).collect();
+        let place = |clip: &Clip| Placement {
+            row: studio.row_of(&clip.track_id),
+            start: clip.start,
+            duration: clip.duration,
+            source_start: clip.source_start,
+            speed: clip.speed,
+        };
+        let named = *group.first()?;
+        // The detached sounds, one per stream, else the clip's own sound.
+        let mut sounds: Vec<&Clip> = group
+            .iter()
+            .copied()
+            .filter(|clip| clip.detached_from.is_some())
+            .collect();
+        if sounds.is_empty() && named.muted != Some(true) && studio.clip_has_sound(named) {
+            sounds.push(named);
+        }
+        let Some(heard) = sounds.first().copied() else {
+            return Some(Subject {
+                clip_id: leader,
+                heard: place(named),
+                members: Vec::new(),
+                peaks: Err(Skip::NoSound),
+            });
+        };
+        let peaks = if group.iter().any(|clip| clip.speed_curve.is_some()) {
+            Err(Skip::SpeedCurve)
+        } else {
+            sounds
                 .iter()
-                .map(|clip| clip.as_ref())
-                .filter(|clip| {
-                    clip.id == leader || clip.detached_from.as_deref() == Some(leader.as_str())
-                })
-                .collect();
-            let place = |clip: &Clip| Placement {
-                row: studio.row_of(&clip.track_id),
-                start: clip.start,
-                duration: clip.duration,
-                source_start: clip.source_start,
-                speed: clip.speed,
-            };
-            // The video's own sound unless it was detached, then the first
-            // detached sound, then anything in the group with sound.
-            let heard = group
-                .iter()
-                .copied()
-                .find(|clip| clip.id == leader && clip.muted != Some(true) && studio.clip_has_sound(clip))
-                .or_else(|| group.iter().copied().find(|clip| clip.detached_from.is_some()))
-                .or_else(|| group.iter().copied().find(|clip| studio.clip_has_sound(clip)));
-            let first = *group.first()?;
-            let Some(heard) = heard else {
-                return Some(Subject {
-                    clip_id: leader.clone(),
-                    heard: place(first),
-                    members: Vec::new(),
-                    peaks: Err(Skip::NoSound),
-                });
-            };
-            let peaks = if group.iter().any(|clip| clip.speed_curve.is_some()) {
-                Err(Skip::SpeedCurve)
-            } else {
-                studio.peaks_of(heard).ok_or(Skip::Loading)
-            };
-            Some(Subject {
-                clip_id: heard.id.clone(),
-                heard: place(heard),
-                members: group.iter().map(|clip| place(clip)).collect(),
-                peaks,
-            })
+                .map(|clip| studio.peaks_of(clip))
+                .collect::<Option<Vec<_>>>()
+                .ok_or(Skip::Loading)
+        };
+        Some(Subject {
+            clip_id: leader,
+            heard: place(heard),
+            members: group.iter().map(|clip| place(clip)).collect(),
+            peaks,
         })
-        .collect()
+    })
+    .collect()
 }
 
 /// A skip's reason, as the summary and the tray say it. Each key is
@@ -446,7 +482,7 @@ mod tests {
             clip_id: "c1".to_owned(),
             heard: placed(1, 10.0),
             members: vec![placed(0, 10.0), placed(1, 10.0)],
-            peaks: Ok(speech_pause_speech()),
+            peaks: Ok(vec![speech_pause_speech()]),
         };
         let plan = plan(&[subject], &SilenceSettings::default());
         assert_eq!(plan.pauses, 1);
@@ -491,7 +527,7 @@ mod tests {
             clip_id: "c3".to_owned(),
             heard: placed(0, 0.0),
             members: vec![placed(0, 0.0)],
-            peaks: Ok(quiet),
+            peaks: Ok(vec![quiet]),
         };
         assert!(plan(&[subject], &SilenceSettings::default()).whole);
     }
@@ -506,7 +542,7 @@ mod tests {
                 ..placed(0, 0.0)
             },
             members: vec![],
-            peaks: Ok(speech_pause_speech()),
+            peaks: Ok(vec![speech_pause_speech()]),
         };
         let plan = plan(&[subject], &SilenceSettings::default());
         assert!((plan.removed - 0.395).abs() < 0.01, "{}", plan.removed);
@@ -514,14 +550,70 @@ mod tests {
 
     #[test]
     fn a_video_and_its_detached_sound_are_one_subject() {
-        let clips = vec![
-            ("v".to_owned(), None),
-            ("s".to_owned(), Some("v".to_owned())),
-            ("m".to_owned(), None),
-            ("orphan".to_owned(), Some("gone".to_owned())),
-        ];
-        let selection: Vec<String> = ["s", "v", "m", "orphan"].map(String::from).to_vec();
-        assert_eq!(leaders(&clips, &selection), vec!["v", "m", "orphan"]);
+        let group_of = |id: &str| -> Vec<String> {
+            let ids: &[&str] = match id {
+                "v" => &["v", "s"],
+                "s" => &["s", "v"],
+                "o1" => &["o1", "o2"],
+                "o2" => &["o2", "o1"],
+                "gone" => &[],
+                other => return vec![other.to_owned()],
+            };
+            ids.iter().map(|id| (*id).to_owned()).collect()
+        };
+        let selection: Vec<String> = ["s", "v", "m", "gone", "o1", "o2"].map(String::from).to_vec();
+        let named: Vec<(String, Vec<String>)> = leaders(&selection, group_of);
+        let names: Vec<&str> = named.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(names, vec!["s", "m", "o1"], "each group once, named as selected");
+        assert_eq!(named[0].1, vec!["s", "v"]);
+    }
+
+    #[test]
+    fn a_pause_must_be_quiet_on_every_stream() {
+        let talking = Arc::new(Pyramid::of(Peaks {
+            min: vec![-0.5; 3000],
+            max: vec![0.5; 3000],
+            buckets_per_second: 1000.0,
+        }));
+        let subject = Subject {
+            clip_id: "c5".to_owned(),
+            heard: placed(0, 0.0),
+            members: vec![placed(0, 0.0), placed(1, 0.0)],
+            peaks: Ok(vec![speech_pause_speech(), talking]),
+        };
+        let plan = plan(&[subject], &SilenceSettings::default());
+        assert!(plan.commands.is_empty(), "the second stream talks through the pause");
+        assert_eq!(plan.pauses, 0);
+    }
+
+    #[test]
+    fn only_what_every_member_shows_is_read() {
+        // The picture starts 1.5 s into the source; the sound from 0.
+        let picture = Placement {
+            start: 1.5,
+            duration: 1.5,
+            source_start: 1.5,
+            ..placed(0, 0.0)
+        };
+        let subject = Subject {
+            clip_id: "c6".to_owned(),
+            heard: placed(1, 0.0),
+            members: vec![picture, placed(1, 0.0)],
+            peaks: Ok(vec![speech_pause_speech()]),
+        };
+        // Half the pause is inside the picture: a shorter minimum finds it.
+        let settings = SilenceSettings {
+            min_pause: 0.3,
+            ..SilenceSettings::default()
+        };
+        let plan = plan(&[subject], &settings);
+        match &plan.commands[..] {
+            [Command::RemoveClipRanges { ranges, .. }] => {
+                assert!(ranges.iter().all(|(a, _)| *a >= 1.5 - 1e-9), "{ranges:?}");
+            }
+            other => panic!("one cut, not {other:?}"),
+        }
+        assert!(plan.shades.iter().all(|(_, start, _)| *start >= 1.5 - 1e-9), "{:?}", plan.shades);
     }
 
     #[test]

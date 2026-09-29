@@ -688,6 +688,206 @@ mod tests {
         );
     }
 
+    /// The piece of `track_id` that starts at `start`.
+    fn piece_at(editor: &Editor, track_id: &str, start: f64) -> String {
+        editor
+            .project()
+            .active()
+            .clips
+            .iter()
+            .find(|clip| clip.track_id == track_id && round(clip.start) == start)
+            .expect("a piece there")
+            .id
+            .clone()
+    }
+
+    #[test]
+    fn a_second_pass_on_a_later_piece_cuts_its_own_sound() {
+        let (mut editor, _, clip) = fixture();
+        let (video, sound_track) = tracks(&editor);
+        editor
+            .apply(Command::DetachAudio { clip_id: clip.clone() })
+            .expect("detaches");
+        editor
+            .apply(Command::RemoveClipRanges {
+                clip_id: clip,
+                ranges: vec![(2.0, 3.0)],
+            })
+            .expect("cuts");
+        // A split copies the sound's link to the head's picture onto every
+        // later piece: the later picture piece is named, and its own sound
+        // goes with it.
+        let picture = piece_at(&editor, &video, 2.0);
+        editor
+            .apply(Command::RemoveClipRanges {
+                clip_id: picture,
+                ranges: vec![(5.0, 6.0)],
+            })
+            .expect("cuts again");
+        let expected = vec![(0.0, 2.0, 0.0), (2.0, 2.0, 3.0), (4.0, 4.0, 6.0)];
+        assert_eq!(pieces(&editor, &video), expected);
+        assert_eq!(pieces(&editor, &sound_track), expected);
+
+        let sound = piece_at(&editor, &sound_track, 4.0);
+        editor
+            .apply(Command::RemoveClipRanges {
+                clip_id: sound,
+                ranges: vec![(7.0, 8.0)],
+            })
+            .expect("cuts a third time");
+        let expected = vec![(0.0, 2.0, 0.0), (2.0, 2.0, 3.0), (4.0, 1.0, 6.0), (5.0, 2.0, 8.0)];
+        assert_eq!(pieces(&editor, &video), expected);
+        assert_eq!(pieces(&editor, &sound_track), expected);
+    }
+
+    #[test]
+    fn a_pause_outside_the_pictures_window_moves_neither_track() {
+        let (mut editor, _, clip) = fixture();
+        let (video, sound_track) = tracks(&editor);
+        editor
+            .apply(Command::DetachAudio { clip_id: clip.clone() })
+            .expect("detaches");
+        // The sound leads the picture in by two seconds.
+        editor
+            .apply(Command::TrimClip {
+                clip_id: clip.clone(),
+                edge: TrimEdge::Start,
+                delta: 2.0,
+                ripple: false,
+            })
+            .expect("trims");
+        let sound = piece_at(&editor, &sound_track, 0.0);
+        editor
+            .apply(Command::RemoveClipRanges {
+                clip_id: sound,
+                ranges: vec![(0.5, 1.5), (5.0, 6.0)],
+            })
+            .expect("cuts");
+        assert_eq!(pieces(&editor, &video), vec![(2.0, 3.0, 2.0), (5.0, 4.0, 6.0)]);
+        assert_eq!(
+            pieces(&editor, &sound_track),
+            vec![(0.0, 5.0, 0.0), (5.0, 4.0, 6.0)],
+            "the lead-in stays, so source 6 is at 5 s on both"
+        );
+    }
+
+    #[test]
+    fn a_sound_on_the_pictures_own_track_is_cut_where_it_now_sits() {
+        let (mut editor, _, clip) = fixture();
+        let (video, sound_track) = tracks(&editor);
+        editor
+            .apply(Command::DetachAudio { clip_id: clip.clone() })
+            .expect("detaches");
+        let sound = piece_at(&editor, &sound_track, 0.0);
+        editor
+            .apply(Command::MoveClips {
+                moves: vec![ClipMove {
+                    clip_id: sound,
+                    start: 12.0,
+                    track_id: video.clone(),
+                }],
+            })
+            .expect("moves");
+        editor
+            .apply(Command::RemoveClipRanges {
+                clip_id: clip,
+                ranges: vec![(2.0, 3.0)],
+            })
+            .expect("cuts");
+        assert_eq!(
+            pieces(&editor, &video),
+            vec![(0.0, 2.0, 0.0), (2.0, 7.0, 3.0), (11.0, 2.0, 0.0), (13.0, 7.0, 3.0)]
+        );
+    }
+
+    #[test]
+    fn leading_and_trailing_pauses_keep_the_ends_of_the_whole() {
+        let (mut editor, _, clip) = fixture();
+        let way_in = crate::model::Transition {
+            id: "cross-fade".to_owned(),
+            duration: 0.5,
+        };
+        editor
+            .apply(Command::UpdateClip {
+                clip_id: clip.clone(),
+                patch: ClipPatch {
+                    fade_in: Some(1.0),
+                    fade_out: Some(1.0),
+                    transition_in: Some(Some(way_in.clone())),
+                    ..ClipPatch::default()
+                },
+            })
+            .expect("fades");
+        editor
+            .apply(Command::RemoveClipRanges {
+                clip_id: clip,
+                ranges: vec![(0.0, 1.0), (4.0, 5.0), (9.0, 10.0)],
+            })
+            .expect("cuts");
+        let mut clips = editor.project().active().clips.to_vec();
+        clips.sort_by(|a, b| a.start.total_cmp(&b.start));
+        assert_eq!(clips.len(), 2);
+        assert_eq!((clips[0].fade_in, clips[0].fade_out), (1.0, 0.0));
+        assert_eq!(clips[0].transition_in, Some(way_in));
+        assert_eq!((clips[1].fade_in, clips[1].fade_out), (0.0, 1.0));
+        assert_eq!(clips[1].transition_in, None);
+    }
+
+    #[test]
+    fn a_cut_group_is_the_pieces_that_play_together() {
+        let mut editor = Editor::new();
+        let media_id = editor
+            .apply(two_track_media("/rec.mp4"))
+            .expect("adds")
+            .created_id
+            .expect("id");
+        let track_id = editor.project().active().tracks[0].id.clone();
+        let video = editor
+            .apply(Command::AddClip {
+                media_id,
+                track_id,
+                start: 0.0,
+                ripple: false,
+            })
+            .expect("adds")
+            .created_id
+            .expect("id");
+        editor
+            .apply(Command::DetachAudio { clip_id: video.clone() })
+            .expect("detaches");
+        let sounds: Vec<String> = editor
+            .project()
+            .active()
+            .clips
+            .iter()
+            .filter(|clip| clip.detached_from.is_some())
+            .map(|clip| clip.id.clone())
+            .collect();
+        assert_eq!(sounds.len(), 2);
+        let sorted = |mut ids: Vec<String>| {
+            ids.sort();
+            ids
+        };
+        let everything = sorted(vec![video.clone(), sounds[0].clone(), sounds[1].clone()]);
+        let timeline = editor.project().active();
+        assert_eq!(sorted(crate::commands::cut_group(timeline, &video)), everything);
+        assert_eq!(sorted(crate::commands::cut_group(timeline, &sounds[1])), everything);
+        assert!(crate::commands::cut_group(timeline, "nope").is_empty());
+
+        // With the picture gone, the two sounds still go together.
+        editor
+            .apply(Command::RemoveClips {
+                clip_ids: vec![video],
+                ripple: false,
+            })
+            .expect("removes");
+        let timeline = editor.project().active();
+        assert_eq!(
+            sorted(crate::commands::cut_group(timeline, &sounds[0])),
+            sorted(sounds.clone())
+        );
+    }
+
     #[test]
     fn keys_stay_on_their_instant_of_the_picture() {
         let (mut editor, _, clip) = fixture();
