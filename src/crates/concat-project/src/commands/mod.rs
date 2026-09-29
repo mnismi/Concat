@@ -13,9 +13,10 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    AppliedFilter, AudioTrack, Clip, ClipKind, ColorRange, ColorSpace, Crop, CustomFont, Cutout,
-    CutoutMode, KeyEase, KeyProperty, MediaItem, MediaKind, MediaOrigin, Project, SpeedPoint,
-    Stroke, TextStyle, Timeline, Track, Transition, VideoSettings,
+    AppliedFilter, AudioTrack, Clip, ClipAnimation, ClipKind, ColorRange, ColorSpace, Crop,
+    CustomFont, Cutout, CutoutMode, KeyEase, KeyProperty, MIN_ANIMATION, MediaItem, MediaKind,
+    MediaOrigin, Project, SpeedPoint, Stroke, TextStyle, Timeline, Track, Transition,
+    VideoSettings,
 };
 
 mod audio;
@@ -218,6 +219,16 @@ pub struct NewMedia {
     /// to SDR.
     #[serde(default)]
     pub color_space: ColorSpace,
+}
+
+/// Which end of a clip an animation plays at.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AnimationSlot {
+    /// Over the clip's first seconds, into its resting state.
+    In,
+    /// Over its last seconds, out of it.
+    Out,
 }
 
 /// Every edit, as the window sends it: a tagged `op` plus camelCase
@@ -559,6 +570,20 @@ pub enum Command {
         /// The spans to take out, in source seconds.
         ranges: Vec<(f64, f64)>,
     },
+    /// Sets the animation at one end of a clip, or takes it away. The
+    /// length is held to [`MIN_ANIMATION`] and the clip's length; when the
+    /// two ends together would outlast the clip, the other end is shortened
+    /// to fit, and dropped when less than [`MIN_ANIMATION`] would be left -
+    /// the end being set keeps what was asked. Refused for a clip that is
+    /// not there and for a kind with no picture to move.
+    SetClipAnimation {
+        /// The clip to animate.
+        clip_id: String,
+        /// Which end.
+        slot: AnimationSlot,
+        /// The preset and its length; None removes it.
+        animation: Option<ClipAnimation>,
+    },
     /// Applies a [`ClipPatch`]: only the fields present change, with the
     /// clamps documented on the patch. An unknown clip is a no-op.
     UpdateClip {
@@ -763,7 +788,7 @@ pub enum CommandError {
     /// one stored would poison every duration and key that touched it.
     #[error("A number in that edit is not finite.")]
     NotANumber,
-    /// [`Command::RemoveClipRanges`] named a clip that is not there.
+    /// A clip command named a clip that is not there.
     #[error("That clip no longer exists.")]
     ClipGone,
     /// [`Command::RemoveClipRanges`] on a clip whose speed changes over
@@ -773,6 +798,9 @@ pub enum CommandError {
     /// [`Command::RemoveClipRanges`] would have taken out the whole clip.
     #[error("That would remove the whole clip.")]
     NothingLeft,
+    /// [`Command::SetClipAnimation`] on a sound or a layer.
+    #[error("Only a video, a still or a title can be animated.")]
+    CannotAnimate,
 }
 
 /// Mints ids. Owned by the editor so restored projects advance it past every
@@ -943,6 +971,9 @@ impl Command {
             Command::RemoveClipRanges { ranges, .. } => {
                 bad(ranges.iter().flat_map(|(from, to)| [*from, *to]))
             }
+            Command::SetClipAnimation { animation, .. } => {
+                bad(animation.iter().map(|animation| animation.duration))
+            }
             Command::FreezeFrame { time, duration, .. } => bad([*time]) || bad(*duration),
             Command::ReplaceClipMedia {
                 item, source_start, ..
@@ -1063,6 +1094,7 @@ pub fn apply(
         | Command::RemoveClips { .. }) => clips::apply(project, mint, command),
         command @ Command::RemoveClipRanges { .. } => cut::apply(project, mint, command),
         command @ (Command::UpdateClip { .. }
+        | Command::SetClipAnimation { .. }
         | Command::SetClipSpeed { .. }
         | Command::SetClipCutout { .. }
         | Command::AddCutoutStroke { .. }

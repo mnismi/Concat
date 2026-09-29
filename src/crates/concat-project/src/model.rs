@@ -845,6 +845,26 @@ pub struct Transition {
     pub duration: f64,
 }
 
+/// A preset played over one end of a clip: its In over the first seconds,
+/// its Out over the last. What each id draws is `concat_core::motion`'s;
+/// an id this build does not know is kept, and drawn as no animation.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipAnimation {
+    /// Which preset, e.g. "zoom-in". Stable forever: project files store it.
+    pub id: String,
+    /// Seconds of timeline it covers, from the end of the clip it sits on.
+    #[serde(default = "half")]
+    pub duration: f64,
+}
+
+/// The shortest animation a command keeps, in seconds: three frames at
+/// thirty, about the least that still reads as movement.
+pub const MIN_ANIMATION: f64 = 0.1;
+
+fn half() -> f64 {
+    0.5
+}
 /// How a title's lines sit within their block, and which point of the block
 /// the clip's position pins: a centred title is placed by its middle, a
 /// left-aligned one by its block's left edge and a right-aligned one by its
@@ -1236,6 +1256,14 @@ pub struct Clip {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "wire::maybe")]
     pub transition_in: Option<Transition>,
+    /// The animation over the clip's first seconds, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "wire::maybe")]
+    pub animation_in: Option<ClipAnimation>,
+    /// The animation over its last seconds, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "wire::maybe")]
+    pub animation_out: Option<ClipAnimation>,
     /// The overlay, when this is a text clip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "wire::maybe")]
@@ -1278,6 +1306,37 @@ fn rewindow(
     out
 }
 
+impl Clip {
+    /// Whether this clip has a picture to move: a video, a still or a
+    /// title. A sound has nothing to show and a layer is a treatment of
+    /// what is beneath it, so neither takes an In or an Out.
+    pub fn can_animate(&self) -> bool {
+        matches!(
+            self.kind,
+            ClipKind::Video | ClipKind::Image | ClipKind::Text
+        )
+    }
+
+    /// Holds both animations inside the clip: when the two together
+    /// outlast it they shrink in proportion, so a trimmed clip keeps both
+    /// ends' character rather than losing one. What every edit that
+    /// shortens a clip runs.
+    pub fn fit_animations(&mut self) {
+        let length = self.duration;
+        let taken = self.animation_in.as_ref().map_or(0.0, |a| a.duration)
+            + self.animation_out.as_ref().map_or(0.0, |a| a.duration);
+        if taken <= length || taken <= 0.0 {
+            return;
+        }
+        let scale = length / taken;
+        for animation in [&mut self.animation_in, &mut self.animation_out]
+            .into_iter()
+            .flatten()
+        {
+            animation.duration *= scale;
+        }
+    }
+}
 impl Default for Clip {
     /// What a document entry starts from before its own fields land on
     /// it: [`Clip::blank`] with no id, on no track, one second of video.
@@ -1333,6 +1392,8 @@ impl Clip {
             muted: None,
             detached_from: None,
             transition_in: None,
+            animation_in: None,
+            animation_out: None,
             text: None,
             extra: Map::new(),
         }

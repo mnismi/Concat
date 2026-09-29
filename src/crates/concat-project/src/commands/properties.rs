@@ -87,6 +87,43 @@ pub(super) fn apply(
             })
         }
 
+        Command::SetClipAnimation {
+            clip_id,
+            slot,
+            animation,
+        } => {
+            let clip = project
+                .active_mut()
+                .clip_mut(&clip_id)
+                .ok_or(CommandError::ClipGone)?;
+            if !clip.can_animate() {
+                return Err(CommandError::CannotAnimate);
+            }
+            let length = clip.duration;
+            let animation = animation.map(|animation| ClipAnimation {
+                duration: animation.duration.clamp(MIN_ANIMATION.min(length), length),
+                ..animation
+            });
+            let room = length - animation.as_ref().map_or(0.0, |a| a.duration);
+            let (mine, other) = match slot {
+                AnimationSlot::In => (&mut clip.animation_in, &mut clip.animation_out),
+                AnimationSlot::Out => (&mut clip.animation_out, &mut clip.animation_in),
+            };
+            let mut applied = assign(mine, animation);
+            if other.as_ref().is_some_and(|other| other.duration > room) {
+                applied = true;
+                if room < MIN_ANIMATION {
+                    *other = None;
+                } else if let Some(other) = other {
+                    other.duration = room;
+                }
+            }
+            Ok(Outcome {
+                created_id: None,
+                applied,
+            })
+        }
+
         Command::SetClipSpeed { clip_id, speed } => {
             let timeline = project.active_mut();
             let Some(clip) = timeline.clip_mut(&clip_id) else {
@@ -104,6 +141,7 @@ pub(super) fn apply(
                     (source_covered / next).max(MIN_CLIP_DURATION),
                 )
                 | assign(&mut clip.speed_curve, None);
+            clip.fit_animations();
             Ok(Outcome {
                 created_id: None,
                 applied,
@@ -285,6 +323,7 @@ pub(super) fn apply(
                     &mut clip.duration,
                     (source_covered / mean).max(MIN_CLIP_DURATION),
                 );
+            clip.fit_animations();
             Ok(Outcome {
                 created_id: None,
                 applied,
