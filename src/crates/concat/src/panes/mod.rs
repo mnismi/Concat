@@ -21,6 +21,7 @@ pub mod monitor;
 pub mod project;
 pub mod relink;
 pub mod settings;
+pub mod silence;
 pub mod speech;
 pub mod start;
 pub mod timeline;
