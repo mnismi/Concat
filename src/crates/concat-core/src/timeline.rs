@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use crate::animate::Animation;
 use crate::arena::{Arena, Id};
+use crate::motion::{self, Motion, Played};
 use crate::retime::SpeedCurve;
 use crate::time::{FrameRate, Rational, TimeRange};
 
@@ -92,6 +93,11 @@ pub struct Clip {
     /// Keys over the clip's placement and opacity, when it has any. See
     /// [`Animation`].
     pub animation: Option<Animation>,
+    /// The preset over the clip's first seconds, when it has one. See
+    /// [`motion`].
+    pub entrance: Option<Played>,
+    /// The preset over its last seconds.
+    pub exit: Option<Played>,
     /// How the clip's colour meets what is beneath it.
     pub blend: Blend,
 }
@@ -214,6 +220,8 @@ impl Clip {
             transform: Transform::IDENTITY,
             retime: None,
             animation: None,
+            entrance: None,
+            exit: None,
             blend: Blend::Normal,
         }
     }
@@ -228,21 +236,58 @@ impl Clip {
             .clamp(0.0, 1.0)
     }
 
-    /// The placement at `time`: the clip's own, moved by its animation.
+    /// The placement at `time`: the clip's own, moved by its keys and then
+    /// by its In and Out.
     pub fn transform_at(&self, time: Rational) -> Transform {
-        match &self.animation {
+        let keyed = match &self.animation {
             Some(animation) => animation.transform_at(self.transform, self.fraction_at(time)),
             None => self.transform,
+        };
+        if self.entrance.is_none() && self.exit.is_none() {
+            return keyed;
+        }
+        let motion = self.motion_at(time);
+        Transform {
+            scale: (keyed.scale * motion.scale).max(0.001),
+            offset_x: keyed.offset_x + motion.offset_x,
+            offset_y: keyed.offset_y + motion.offset_y,
+            rotation: keyed.rotation + motion.rotation,
+            ..keyed
         }
     }
 
     /// The opacity at `time`, before the fade ramps: the clip's own, scaled
-    /// by its animation.
+    /// by its keys and then by its In and Out.
     pub fn opacity_at(&self, time: Rational) -> f32 {
-        match &self.animation {
+        let keyed = match &self.animation {
             Some(animation) => animation.opacity_at(self.opacity, self.fraction_at(time)),
             None => self.opacity,
+        };
+        if self.entrance.is_none() && self.exit.is_none() {
+            return keyed;
         }
+        (f64::from(keyed) * self.motion_at(time).opacity).clamp(0.0, 1.0) as f32
+    }
+
+    /// What the In and Out do at `time`: the identity outside both
+    /// windows, and both combined where a short clip's windows meet.
+    pub fn motion_at(&self, time: Rational) -> Motion {
+        let into = (time - self.start).as_f64();
+        let left = (self.start + self.duration - time).as_f64();
+        let mut out = Motion::IDENTITY;
+        if let Some(played) = &self.entrance
+            && played.seconds > 0.0
+            && into < played.seconds
+        {
+            out = out.then(motion::motion_at(&played.id, into / played.seconds));
+        }
+        if let Some(played) = &self.exit
+            && played.seconds > 0.0
+            && left < played.seconds
+        {
+            out = out.then(motion::motion_at(&played.id, left / played.seconds));
+        }
+        out
     }
 
     /// The opacity ramp factor at `time`, in `0.0..=1.0`.
@@ -700,5 +745,65 @@ mod tests {
         );
         assert_eq!(orphan, None);
         assert_eq!(timeline.clip_count(), 0);
+    }
+
+    use crate::motion::Played;
+
+    fn animated(entrance: Option<(&str, f64)>, exit: Option<(&str, f64)>) -> Clip {
+        let mut clip = Clip::new(MediaRef::new("a.mp4"), seconds(2), seconds(10));
+        let played = |(id, seconds): (&str, f64)| Played {
+            id: id.to_owned(),
+            seconds,
+        };
+        clip.entrance = entrance.map(played);
+        clip.exit = exit.map(played);
+        clip
+    }
+
+    #[test]
+    fn a_clip_zooms_in_over_its_entrance_and_rests_after() {
+        let clip = animated(Some(("zoom-in", 1.0)), None);
+        assert!((clip.transform_at(seconds(2)).scale - 0.6).abs() < 1e-9);
+        assert_eq!(clip.opacity_at(seconds(2)), 0.0);
+        assert_eq!(clip.transform_at(seconds(5)), clip.transform);
+        assert_eq!(clip.opacity_at(seconds(5)), 1.0);
+    }
+
+    #[test]
+    fn a_clip_fades_out_over_its_exit() {
+        let clip = animated(None, Some(("fade-out", 2.0)));
+        // One second before the end is halfway through a two-second exit.
+        assert!((clip.opacity_at(seconds(11)) - 0.5).abs() < 1e-6);
+        assert_eq!(clip.opacity_at(seconds(9)), 1.0);
+    }
+
+    #[test]
+    fn motion_rides_on_the_keys() {
+        use crate::animate::{Animation, Ease, Key, Track};
+        let mut clip = animated(Some(("zoom-in", 1.0)), None);
+        clip.animation = Some(Animation {
+            scale: Track::new(vec![Key {
+                at: 0.0,
+                value: 2.0,
+                ease: Ease::LINEAR,
+            }]),
+            ..Animation::default()
+        });
+        // Keyed to twice the size, and zoomed in from 0.6 of that.
+        assert!((clip.transform_at(seconds(2)).scale - 1.2).abs() < 1e-9);
+        assert!((clip.transform_at(seconds(6)).scale - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pop_starts_invisible_but_never_at_zero_scale() {
+        let clip = animated(Some(("pop", 0.5)), None);
+        assert!(clip.transform_at(seconds(2)).scale > 0.0);
+        assert_eq!(clip.opacity_at(seconds(2)), 0.0);
+    }
+
+    #[test]
+    fn an_empty_window_plays_nothing() {
+        let clip = animated(Some(("zoom-in", 0.0)), Some(("zoom-out", 0.0)));
+        assert_eq!(clip.transform_at(seconds(2)), clip.transform);
     }
 }
