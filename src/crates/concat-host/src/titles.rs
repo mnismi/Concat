@@ -156,7 +156,15 @@ impl Titles {
                     flip_h: clip.flip_h,
                     flip_v: clip.flip_v,
                     blend: clip.blend.clone(),
-                    effects: clip.video_effects.clone(),
+                    effects: {
+                        let mut chain = clip.video_effects.clone();
+                        chain.extend(concat_export::animations::animation_effects(
+                            clip,
+                            0.0,
+                            Some(1.0),
+                        ));
+                        chain
+                    },
                     scale: clip.scale,
                     offset_x: clip.offset_x,
                     offset_y: clip.offset_y,

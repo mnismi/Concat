@@ -113,6 +113,9 @@ export component AnimationsPanel inherits VerticalLayout {
     in property <SelectedClipData> selected;
     in property <[AnimationPresetData]> presets-in;
     in property <[AnimationPresetData]> presets-out;
+    in property <[AnimationPresetData]> effects-in;
+    in property <[AnimationPresetData]> effects-out;
+    property <[AnimationPresetData]> effects: root.out ? root.effects-out : root.effects-in;
 
     callback pick(out: bool, id: string);
     callback length-set(out: bool, seconds: float);
@@ -154,7 +157,13 @@ export component AnimationsPanel inherits VerticalLayout {
         picked(id) => { root.pick(root.out, id); }
     }
 
-    // Task 6 adds the Effects shelf here.
+    Subhead { title: I18n.t("common.effects"); }
+    AnimationGrid {
+        presets: root.effects;
+        with-none: false;
+        chosen: root.chosen;
+        picked(id) => { root.pick(root.out, id); }
+    }
 
     if root.chosen != "": HorizontalLayout {
         Param {

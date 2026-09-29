@@ -779,6 +779,52 @@ fn an_animation_reaches_the_picture() {
     exported.expect_colours(2.95, &[((0.5, 0.5), [0, 0, 0])]);
 }
 
+/// An effect preset reaches the picture: quadrants that glitch in over a
+/// second are torn at their first frame and whole by a second and a half.
+#[test]
+fn an_effect_animation_reaches_the_picture() {
+    use concat_project::commands::AnimationSlot;
+    use concat_project::model::ClipAnimation;
+
+    let scratch = Scratch::new("effect-animations");
+    let path = scratch.path().join("quadrants.mp4");
+    quadrants(&path);
+    let mut studio = Studio::new(scratch.path(), "Glitch", video(WIDTH, HEIGHT, 30, 1));
+    let media = studio.import(&path);
+    let clip = studio
+        .apply(Command::AddClipAtFirstFree {
+            media_id: media,
+            start: 0.0,
+        })
+        .expect("placed");
+    let still = studio.export("no animation");
+    studio.apply(Command::SetClipAnimation {
+        clip_id: clip,
+        slot: AnimationSlot::In,
+        animation: Some(ClipAnimation {
+            id: "glitch-in".to_owned(),
+            duration: 1.0,
+        }),
+    });
+    let glitched = studio.export("glitch in");
+    let differs = |a: &Frame, b: &Frame| {
+        a.pixels()
+            .chunks(4)
+            .zip(b.pixels().chunks(4))
+            .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 40))
+            .count()
+    };
+    let pixels = (WIDTH * HEIGHT) as usize;
+    assert!(
+        differs(&still.frames[0], &glitched.frames[0]) > pixels / 100,
+        "the first frame is torn"
+    );
+    assert!(
+        differs(&still.frames[45], &glitched.frames[45]) < pixels / 200,
+        "the frame at 1.5 s is whole"
+    );
+}
+
 /// Issue #202: on Windows laptops with NVIDIA chips an export took the app
 /// down at its first frame, with nothing in the log. The export had opened
 /// a device of its own through every API wgpu was built with, where the

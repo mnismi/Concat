@@ -216,6 +216,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
         editor.set_catalogue_transitions(ModelRc::from(models.catalogue_transitions.clone()));
         editor.set_animation_presets_in(ModelRc::from(models.animation_presets_in.clone()));
         editor.set_animation_presets_out(ModelRc::from(models.animation_presets_out.clone()));
+        editor.set_animation_effects_in(ModelRc::from(models.animation_effects_in.clone()));
+        editor.set_animation_effects_out(ModelRc::from(models.animation_effects_out.clone()));
         editor.set_effect_groups(ModelRc::from(models.effect_groups.clone()));
         editor.set_filter_groups(ModelRc::from(models.filter_groups.clone()));
         editor.set_audio_groups(ModelRc::from(models.audio_groups.clone()));

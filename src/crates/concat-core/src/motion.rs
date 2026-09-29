@@ -105,12 +105,10 @@ pub struct Preset {
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Curve {
     /// Nothing moves; the effect does the work.
-    #[allow(dead_code)] // the Effects presets of Task 6
     Still,
     /// Opacity alone, eased at both ends.
     Fade,
     /// Opacity alone, reaching full at the halfway point.
-    #[allow(dead_code)] // the Effects presets of Task 6
     FadeFast,
     /// Scale from this factor, fading up as it goes.
     Zoom(f64),
@@ -134,6 +132,60 @@ const fn basic(id: &'static str, side: Side, label: &'static str, curve: Curve) 
         effect: None,
     }
 }
+
+const fn effect(
+    id: &'static str,
+    side: Side,
+    label: &'static str,
+    curve: Curve,
+    ramp: EffectRamp,
+) -> Preset {
+    Preset {
+        id,
+        side,
+        group: Group::Effects,
+        label,
+        curve,
+        effect: Some(ramp),
+    }
+}
+
+const GLITCH: EffectRamp = EffectRamp {
+    effect: "concat.glitch",
+    param: "amount",
+    from: 100.0,
+    rest: 0.0,
+};
+const BLUR: EffectRamp = EffectRamp {
+    effect: "concat.gaussian-blur",
+    param: "radius",
+    from: 40.0,
+    rest: 1.0,
+};
+const PIXELATE: EffectRamp = EffectRamp {
+    effect: "concat.pixelate",
+    param: "size",
+    from: 64.0,
+    rest: 2.0,
+};
+const RGB_SPLIT: EffectRamp = EffectRamp {
+    effect: "concat.chromatic-aberration",
+    param: "shift",
+    from: 24.0,
+    rest: 1.0,
+};
+const FLASH: EffectRamp = EffectRamp {
+    effect: "concat.exposure",
+    param: "stops",
+    from: 3.0,
+    rest: 0.0,
+};
+const ZOOM_BLUR: EffectRamp = EffectRamp {
+    effect: "concat.zoom-blur",
+    param: "amount",
+    from: 100.0,
+    rest: 0.0,
+};
 
 /// Every preset, In and Out, in the order the tab shows them.
 pub const PRESETS: &[Preset] = &[
@@ -248,6 +300,90 @@ pub const PRESETS: &[Preset] = &[
         Side::Out,
         "animations.preset.shakeOut",
         Curve::Shake,
+    ),
+    effect(
+        "glitch-in",
+        Side::In,
+        "animations.preset.glitch",
+        Curve::Still,
+        GLITCH,
+    ),
+    effect(
+        "blur-in",
+        Side::In,
+        "animations.preset.blur",
+        Curve::FadeFast,
+        BLUR,
+    ),
+    effect(
+        "pixelate-in",
+        Side::In,
+        "animations.preset.pixelate",
+        Curve::Still,
+        PIXELATE,
+    ),
+    effect(
+        "rgb-split-in",
+        Side::In,
+        "animations.preset.rgbSplit",
+        Curve::Still,
+        RGB_SPLIT,
+    ),
+    effect(
+        "flash-in",
+        Side::In,
+        "animations.preset.flash",
+        Curve::Still,
+        FLASH,
+    ),
+    effect(
+        "zoom-blur-in",
+        Side::In,
+        "animations.preset.zoomBlur",
+        Curve::Zoom(0.6),
+        ZOOM_BLUR,
+    ),
+    effect(
+        "glitch-out",
+        Side::Out,
+        "animations.preset.glitch",
+        Curve::Still,
+        GLITCH,
+    ),
+    effect(
+        "blur-out",
+        Side::Out,
+        "animations.preset.blur",
+        Curve::FadeFast,
+        BLUR,
+    ),
+    effect(
+        "pixelate-out",
+        Side::Out,
+        "animations.preset.pixelate",
+        Curve::Still,
+        PIXELATE,
+    ),
+    effect(
+        "rgb-split-out",
+        Side::Out,
+        "animations.preset.rgbSplit",
+        Curve::Still,
+        RGB_SPLIT,
+    ),
+    effect(
+        "flash-out",
+        Side::Out,
+        "animations.preset.flash",
+        Curve::Still,
+        FLASH,
+    ),
+    effect(
+        "zoom-blur-out",
+        Side::Out,
+        "animations.preset.zoomBlur",
+        Curve::Zoom(0.6),
+        ZOOM_BLUR,
     ),
 ];
 
@@ -442,6 +578,30 @@ mod tests {
                 "{}",
                 preset.id
             );
+        }
+    }
+
+    #[test]
+    fn every_effect_preset_ramps_a_shipped_parameter_and_pairs_with_its_other_end() {
+        let effects: Vec<&Preset> = PRESETS
+            .iter()
+            .filter(|preset| preset.group == Group::Effects)
+            .collect();
+        assert_eq!(effects.len(), 12);
+        for preset in &effects {
+            let ramp = preset.effect.expect("an Effects preset ramps an effect");
+            assert!(ramp.effect.starts_with("concat."), "{}", preset.id);
+            let twin = if let Some(stem) = preset.id.strip_suffix("-in") {
+                format!("{stem}-out")
+            } else {
+                format!(
+                    "{}-in",
+                    preset.id.strip_suffix("-out").expect("-in or -out")
+                )
+            };
+            let twin = super::preset(&twin).expect("both ends");
+            assert_eq!(twin.effect, preset.effect, "{}", preset.id);
+            assert_ne!(twin.side, preset.side);
         }
     }
 }

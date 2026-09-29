@@ -149,12 +149,12 @@ fn animation_glyph(id: &str) -> Glyph {
     }
 }
 
-/// Publishes the Basic grid of each end, named in the current language.
-/// Task 6 adds the Effects grids beside them.
+/// Publishes both shelves of each end - Basic and Effects, one model each
+/// so a grid only ever lays out its own cards - named in the current
+/// language, an effect preset wearing its effect's still from the shelf.
 fn fill_animation_presets(models: &Models) {
     use crate::panes::animations;
     use concat_core::motion::Group;
-    use concat_project::commands::AnimationSlot;
     let art_of = |effect: &str| {
         models
             .catalogue_effects
@@ -163,25 +163,35 @@ fn fill_animation_presets(models: &Models) {
             .map(|entry| entry.art)
             .unwrap_or_default()
     };
-    for (slot, model) in [
-        (AnimationSlot::In, &models.animation_presets_in),
-        (AnimationSlot::Out, &models.animation_presets_out),
+    for (slot, basic, effects) in [
+        (
+            AnimationSlot::In,
+            &models.animation_presets_in,
+            &models.animation_effects_in,
+        ),
+        (
+            AnimationSlot::Out,
+            &models.animation_presets_out,
+            &models.animation_effects_out,
+        ),
     ] {
-        let rows: Vec<AnimationPresetData> = animations::offered(slot)
-            .into_iter()
-            .filter(|preset| preset.group == Group::Basic)
-            .map(|preset| AnimationPresetData {
-                id: preset.id.into(),
-                name: crate::i18n::t(preset.label).into(),
-                effects: preset.group == Group::Effects,
-                glyph: animation_glyph(preset.id),
-                art: preset
-                    .effect
-                    .map(|ramp| art_of(ramp.effect))
-                    .unwrap_or_default(),
-            })
-            .collect();
-        model.set_vec(rows);
+        for (group, model) in [(Group::Basic, basic), (Group::Effects, effects)] {
+            let rows: Vec<AnimationPresetData> = animations::offered(slot)
+                .into_iter()
+                .filter(|preset| preset.group == group)
+                .map(|preset| AnimationPresetData {
+                    id: preset.id.into(),
+                    name: crate::i18n::t(preset.label).into(),
+                    effects: preset.group == Group::Effects,
+                    glyph: animation_glyph(preset.id),
+                    art: preset
+                        .effect
+                        .map(|ramp| art_of(ramp.effect))
+                        .unwrap_or_default(),
+                })
+                .collect();
+            model.set_vec(rows);
+        }
     }
 }
 
@@ -632,6 +642,9 @@ pub struct Models {
     /// language; see `fill_animation_presets`.
     pub animation_presets_in: Rc<VecModel<AnimationPresetData>>,
     pub animation_presets_out: Rc<VecModel<AnimationPresetData>>,
+    /// The same two ends' Effects shelves.
+    pub animation_effects_in: Rc<VecModel<AnimationPresetData>>,
+    pub animation_effects_out: Rc<VecModel<AnimationPresetData>>,
     pub effect_groups: Rc<VecModel<SharedString>>,
     pub filter_groups: Rc<VecModel<SharedString>>,
     pub audio_groups: Rc<VecModel<SharedString>>,
@@ -714,6 +727,8 @@ impl Models {
             catalogue_transitions: Rc::new(VecModel::default()),
             animation_presets_in: Rc::new(VecModel::default()),
             animation_presets_out: Rc::new(VecModel::default()),
+            animation_effects_in: Rc::new(VecModel::default()),
+            animation_effects_out: Rc::new(VecModel::default()),
             effect_groups: Rc::new(VecModel::default()),
             filter_groups: Rc::new(VecModel::default()),
             audio_groups: Rc::new(VecModel::default()),

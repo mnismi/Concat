@@ -20,6 +20,7 @@
 //! always-correct fallback. Sound is planned by the engine as one FFmpeg
 //! filtergraph and mixed in a single pass.
 
+pub mod animations;
 pub mod chains;
 pub mod flatten;
 mod resolve;

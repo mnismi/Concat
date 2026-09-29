@@ -110,7 +110,20 @@ pub fn flatten_timeline_in(
                     .crop
                     .filter(|crop| !crop.is_none())
                     .map(|crop| [crop.left, crop.top, crop.right, crop.bottom]),
-                effects: clip.video_effects.clone(),
+                effects: {
+                    let speed = match clip.kind {
+                        ModelClipKind::Image => Some(1.0),
+                        _ if clip.speed_curve.is_some() => None,
+                        _ => Some(clip.speed),
+                    };
+                    let mut chain = clip.video_effects.clone();
+                    chain.extend(crate::animations::animation_effects(
+                        clip,
+                        clip.source_start,
+                        speed,
+                    ));
+                    chain
+                },
                 scale: export_base(clip, KeyProperty::Scale),
                 offset_x: export_base(clip, KeyProperty::OffsetX),
                 offset_y: export_base(clip, KeyProperty::OffsetY),

@@ -204,6 +204,8 @@ export component ConfigPane inherits Rectangle {
     callback transition-duration-set(seconds: float);
     in property <[AnimationPresetData]> animation-presets-in;
     in property <[AnimationPresetData]> animation-presets-out;
+    in property <[AnimationPresetData]> animation-effects-in;
+    in property <[AnimationPresetData]> animation-effects-out;
     callback animation-pick(out: bool, id: string);
     callback animation-length-set(out: bool, seconds: float);
     callback animation-replay(out: bool);
@@ -609,6 +611,8 @@ export component ConfigPane inherits Rectangle {
                     selected: root.selected;
                     presets-in: root.animation-presets-in;
                     presets-out: root.animation-presets-out;
+                    effects-in: root.animation-effects-in;
+                    effects-out: root.animation-effects-out;
                     pick(out, id) => { root.animation-pick(out, id); }
                     length-set(out, seconds) => { root.animation-length-set(out, seconds); }
                     replay(out) => { root.animation-replay(out); }
