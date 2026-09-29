@@ -691,6 +691,52 @@ fn one_clip_exports_whole_at_every_rate() {
     }
 }
 
+/// Remove Silences end to end: the pauses read off the clock's waveform
+/// are its even seconds, and the cut plays the odd seconds back to back.
+#[test]
+fn removing_silences_leaves_only_the_sound() {
+    use concat_media::silence::{SilenceSettings, find_silences};
+
+    let scratch = Scratch::new("silences");
+    let sources = Sources::make(scratch.path());
+    let mut studio = Studio::new(scratch.path(), "Silences", video(WIDTH, HEIGHT, 30, 1));
+    let peek = studio.import(&sources.peek);
+    let clip = studio
+        .apply(Command::AddClipAtFirstFree {
+            media_id: peek,
+            start: 0.0,
+        })
+        .expect("placed");
+
+    let peaks = media::peaks(sources.peek.to_str().expect("utf-8"), None, None).expect("peaks");
+    let settings = SilenceSettings {
+        padding: 0.0,
+        ..SilenceSettings::default()
+    };
+    let ranges = find_silences(&peaks, 0.0, 6.0, &settings);
+    assert_eq!(ranges.len(), 3, "the even seconds: {ranges:?}");
+    for ((from, to), second) in ranges.iter().zip([0.0, 2.0, 4.0]) {
+        assert!(
+            (from - second).abs() < 0.05 && (to - (second + 1.0)).abs() < 0.05,
+            "{ranges:?}"
+        );
+    }
+
+    studio.apply(Command::RemoveClipRanges {
+        clip_id: clip,
+        ranges,
+    });
+    let exported = studio.export_at("silences removed", None);
+    let seconds = exported.frames.len() as f64 / exported.fps;
+    assert!((seconds - 3.0).abs() < 0.1, "three seconds of tone, not {seconds}s");
+    exported.expect_tone(0.5);
+    exported.expect_tone(1.5);
+    exported.expect_tone(2.5);
+    exported.expect_second(0.5, 1);
+    exported.expect_second(1.5, 3);
+    exported.expect_second(2.5, 5);
+}
+
 /// Issue #202: on Windows laptops with NVIDIA chips an export took the app
 /// down at its first frame, with nothing in the log. The export had opened
 /// a device of its own through every API wgpu was built with, where the
