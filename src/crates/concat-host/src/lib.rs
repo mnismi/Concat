@@ -19,6 +19,7 @@
 //! and cancels through flags, and the caller decides which thread it runs on.
 
 pub mod brush;
+pub mod bundle;
 pub mod cards;
 pub mod cutout;
 pub mod dirs;
@@ -28,6 +29,7 @@ pub mod jobs;
 pub mod logs;
 pub mod media;
 pub mod models;
+pub mod pieces;
 pub mod playback;
 pub mod preview;
 pub mod projects;

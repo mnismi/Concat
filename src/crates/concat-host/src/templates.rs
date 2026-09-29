@@ -24,6 +24,7 @@ use concat_project::{Command, DocumentSettings, Editor};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::bundle::bundle_file;
 use crate::{media, projects};
 
 const MANIFEST: &str = "template.json";
@@ -137,28 +138,6 @@ pub fn save(
     }
 
     read_info(&root)
-}
-
-/// Copies one source file into `assets/` and returns its bundle-relative
-/// path. The bundle must be self-contained, so a missing source is an error,
-/// not a warning - a template that cannot find its own music is not one.
-fn bundle_file(assets: &Path, id: &str, source: &str) -> Result<String, String> {
-    if source.is_empty() {
-        return Err(
-            "a media item has no file behind it; fill or remove it before saving a template"
-                .to_owned(),
-        );
-    }
-    let base = Path::new(source)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(projects::folder_name)
-        .unwrap_or_else(|| "file".to_owned());
-    let name = format!("{}-{base}", projects::folder_name(id));
-    let destination = assets.join(&name);
-    std::fs::copy(source, &destination)
-        .map_err(|error| format!("could not bundle {source}: {error}"))?;
-    Ok(format!("{ASSETS}/{name}"))
 }
 
 /// Every template in the library, in name order.
