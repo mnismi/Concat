@@ -834,6 +834,9 @@ component CatalogueCard inherits Rectangle {
 
     callback applied();
     callback auditioned();
+    /// Right-click, at a point in the card's own coordinates. Only a shelf
+    /// with a menu does anything with it; see ShelfGrid.menus.
+    callback context(x: length, y: length);
 
     /// An entry with no artwork is a compact card: the name sits inside the
     /// tile, there is no mark and no caption, and the tile is half as tall.
@@ -862,6 +865,13 @@ component CatalogueCard inherits Rectangle {
         card := TouchArea {
             enabled: root.item.enabled;
             mouse-cursor: root.item.enabled ? pointer : default;
+            // The right button asks for the menu on its release and does
+            // nothing else, as a bin card's does.
+            pointer-event(event) => {
+                if (event.button == PointerEventButton.right && event.kind == PointerEventKind.up) {
+                    root.context(self.mouse-x, self.mouse-y);
+                }
+            }
             // On a showing card the second click of a double-click lands
             // here first and takes the showing off; the add that follows
             // is what the gesture meant, and Rust drops the showing anyway.
@@ -1199,6 +1209,23 @@ export component ShelfGrid inherits Rectangle {
     in property <string> auditioning;
     callback auditioned(id: string);
 
+    /// A shelf whose cards have a right-click menu - the pieces - filled by
+    /// Rust and opened by token, as MediaGrid's is.
+    in property <bool> menus;
+    in property <[MenuItemData]> menu-items;
+    in property <length> menu-height;
+    in property <int> menu-token;
+    callback card-menu(id: string);
+    callback menu-selected(id: string);
+    property <bool> asked;
+    property <int> own-token;
+    changed menu-token => {
+        if (root.asked) {
+            root.asked = false;
+            root.own-token = root.menu-token;
+        }
+    }
+
     property <length> gap: 8px;
     property <length> min-card: 88px;
     /// Name-only cards, half the height: for a shelf whose entries have no
@@ -1235,6 +1262,25 @@ export component ShelfGrid inherits Rectangle {
 
         auditioned => { root.auditioned(entry.id); }
         applied => { root.applied(entry.id, entry.name); }
+        context(x, y) => {
+            if (root.menus) {
+                menu.request-x = self.x + x;
+                menu.request-y = self.y + y;
+                root.asked = true;
+                root.card-menu(entry.id);
+            }
+        }
+    }
+
+    menu := ContextMenu {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        items: root.menu-items;
+        menu-height: root.menu-height;
+        token: root.own-token;
+        selected(id) => { root.menu-selected(id); }
     }
 }
 
@@ -1477,6 +1523,12 @@ export component MediaPane inherits Rectangle {
     callback apply-audio(effect-id: string);
     /// Templates page: open the save-as-template flow for this project.
     callback save-template();
+    /// Templates page: the piece library, and its verbs - save the timeline
+    /// selection as a piece, place one at the playhead, open a card's menu.
+    in property <[CatalogueEntryData]> pieces;
+    callback save-piece();
+    callback place-piece(path: string);
+    callback piece-menu(path: string);
     /// Filters page: bring in `.cube` tables as looks of the user's own.
     callback import-lut();
     /// Effects and Filters pages: read the user's effects folder again.
@@ -1503,6 +1555,7 @@ export component MediaPane inherits Rectangle {
     property <bool> effects-open: true;
     property <bool> filters-open: true;
     property <bool> templates-open: true;
+    property <bool> pieces-open: true;
     /// The Effects page shows the sound's shelves rather than the
     /// picture's: whichever heading's row was picked last.
     property <bool> audio-shelf;
@@ -1872,6 +1925,17 @@ export component MediaPane inherits Rectangle {
                             label: I18n.t("mediaPane.myTemplates");
                             current: true;
                         }
+                        CategoryHeading {
+                            height: 26px;
+                            title: I18n.t("mediaPane.pieces");
+                            open: root.pieces-open;
+                            toggled => { root.pieces-open = !root.pieces-open; }
+                        }
+                        if root.pieces-open: CategoryRow {
+                            height: 24px;
+                            label: I18n.t("mediaPane.myPieces");
+                            current: true;
+                        }
                     }
                 }
             }
@@ -2155,6 +2219,42 @@ export component MediaPane inherits Rectangle {
                 if root.tab == 5: Empty {
                     glyph: Glyph.slot;
                     text: I18n.t("mediaPane.noTemplatesYetMark");
+                }
+
+                // Pieces: saved from the timeline's selection, placed from
+                // here by a click (at the playhead) or a drag (where dropped).
+                if root.tab == 5: HorizontalLayout {
+                    padding: 8px;
+
+                    ImportButton {
+                        label: I18n.t("mediaPane.savePiece");
+                        glyph: Glyph.slot;
+                        clicked => { root.save-piece(); }
+                    }
+                }
+
+                if root.tab == 5 && root.pieces.length > 0: HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    padding-bottom: 8px;
+
+                    ShelfGrid {
+                        entries: root.pieces;
+                        payload-kind: "piece";
+                        glyph: Glyph.slot;
+                        menus: true;
+                        menu-items: root.menu-items;
+                        menu-height: root.menu-height;
+                        menu-token: root.menu-token;
+                        applied(id, label) => { root.place-piece(id); }
+                        card-menu(id) => { root.piece-menu(id); }
+                        menu-selected(id) => { root.menu-selected(id); }
+                    }
+                }
+
+                if root.tab == 5 && root.pieces.length == 0: Empty {
+                    glyph: Glyph.slot;
+                    text: I18n.t("mediaPane.noPiecesYetMark");
                 }
             }
         }

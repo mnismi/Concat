@@ -144,6 +144,10 @@ export component Seat inherits Rectangle {
             audition-filter(id) => { Editor.library-audition-filter(id); }
             apply-audio(id) => { Editor.library-apply-audio(id); }
             save-template => { Editor.library-save-template(); }
+            pieces: Editor.pieces;
+            save-piece => { Editor.library-save-piece(); }
+            place-piece(path) => { Editor.library-place-piece(path); }
+            piece-menu(path) => { Editor.library-piece-menu(path); }
             import-lut => { Editor.library-import-lut(); }
             reload-packages => { Editor.library-reload-packages(); }
         }
@@ -262,6 +266,8 @@ export component Seat inherits Rectangle {
             animation-pick(out, id) => { Editor.animation-pick(out, id); }
             animation-length-set(out, seconds) => { Editor.animation-length-set(out, seconds); }
             animation-replay(out) => { Editor.animation-replay(out); }
+            piece-texts: Editor.piece-texts;
+            piece-text-set(inner, text) => { Editor.piece-text-set(inner, text); }
 
             project-name: Editor.project-name;
             project-folder: Editor.project-folder;

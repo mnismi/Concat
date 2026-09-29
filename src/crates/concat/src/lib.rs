@@ -213,6 +213,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
         editor.set_audio_effects(ModelRc::from(models.audio_effects.clone()));
         editor.set_catalogue_effects(ModelRc::from(models.catalogue_effects.clone()));
         editor.set_catalogue_filters(ModelRc::from(models.catalogue_filters.clone()));
+        editor.set_pieces(ModelRc::from(models.pieces.clone()));
+        editor.set_piece_texts(ModelRc::from(models.piece_texts.clone()));
         editor.set_catalogue_audio(ModelRc::from(models.catalogue_audio.clone()));
         editor.set_catalogue_transitions(ModelRc::from(models.catalogue_transitions.clone()));
         editor.set_animation_presets_in(ModelRc::from(models.animation_presets_in.clone()));
@@ -689,6 +691,37 @@ pub fn run() -> Result<(), slint::PlatformError> {
     editor.on_library_save_template(on_window!(|state| {
         state.save_template();
     }));
+    editor.on_library_save_piece(on_window!(|state| {
+        state.save_piece();
+    }));
+    editor.on_library_place_piece(on_window!(|state, path: SharedString| {
+        let at = f64::from(state.playhead.max(0.0));
+        state.place_piece(path.as_str(), None, at);
+    }));
+    // A piece card's menu shares the rows and the token with the clips' and
+    // the bin's; the third target is which card it was.
+    editor.on_library_piece_menu(on_window!(|state, path: SharedString| {
+        state.menu_token += 1;
+        state.menu_target = None;
+        state.menu_media = None;
+        state.piece_menu = Some(path.to_string());
+    }));
+    editor.on_piece_text_set(on_window!(
+        |state, inner: SharedString, text: SharedString| {
+            state.set_piece_text(inner.as_str(), text.as_str());
+        }
+    ));
+    app.on_piece_name_edited(on_window!(|state, name: SharedString| {
+        if let Some((_, held)) = state.piece_name.as_mut() {
+            *held = name.to_string();
+        }
+    }));
+    app.on_piece_name_apply(on_window!(|state| {
+        state.piece_named();
+    }));
+    app.on_piece_name_closed(on_window!(|state| {
+        state.piece_name = None;
+    }));
     editor.on_library_import_lut(on_window!(|state| {
         state.import_lut();
     }));
@@ -1159,6 +1192,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     editor.on_clip_context(on_window!(|state, id: SharedString| {
         state.menu_token += 1;
         state.menu_media = None;
+        state.piece_menu = None;
         if state.clip(id.as_str()).is_none() {
             state.menu_target = None;
             return;
@@ -1173,12 +1207,17 @@ pub fn run() -> Result<(), slint::PlatformError> {
     editor.on_media_context(on_window!(|state, row: i32| {
         state.menu_token += 1;
         state.menu_target = None;
+        state.piece_menu = None;
         state.menu_media = state
             .media
             .by_row(state.project(), row)
             .map(|item| item.id.clone());
     }));
     editor.on_menu_selected(on_window!(|state, action: SharedString| {
+        if let Some(path) = state.piece_menu.take() {
+            state.piece_action(&path, action.as_str());
+            return;
+        }
         if let Some(id) = state.menu_media.clone() {
             state.media_action(&id, action.as_str());
             return;

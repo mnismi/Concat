@@ -13,6 +13,7 @@ import { DockDivider, DockSide, SeatBox } from "dock.slint";
 import { PaneKind } from "workspace/pane-switcher.slint";
 import { MenuItemData } from "primitives/context-menu.slint";
 import { AnimationPresetData } from "inspector/animations-panel.slint";
+import { PieceTextData } from "inspector/piece-panel.slint";
 import {
     ClipData, ClipField, ClipTextField, DropData, SelectedClipData, SilenceShadeData,
     StageGuideData, StageItemData, TimelineTabData, TimelineTool, TrackData,
@@ -121,6 +122,16 @@ export global Editor {
     in-out property <string> library-audition;
     callback library-apply-audio(effect-id: string);
     callback library-save-template();
+    /// The piece library, as the Templates page's Pieces shelf shows it:
+    /// each card's id is its bundle folder.
+    in-out property <[CatalogueEntryData]> pieces;
+    callback library-save-piece();
+    callback library-place-piece(path: string);
+    callback library-piece-menu(path: string);
+    /// The selected piece's titles, for the inspector's Piece tab, and one
+    /// of them given new words.
+    in-out property <[PieceTextData]> piece-texts;
+    callback piece-text-set(inner: string, text: string);
     /// Filters page: import `.cube` tables as looks of the user's own.
     callback library-import-lut();
     /// Effects and Filters pages: read the user's effects folder again, so

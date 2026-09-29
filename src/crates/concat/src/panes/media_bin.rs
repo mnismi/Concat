@@ -227,6 +227,10 @@ impl MediaBin {
     /// origin's shelf under Generated and nowhere else, so a read-aloud
     /// voice is not also the fifth thing under Audio.
     fn shows(filter: MediaFilter, item: &MediaItem) -> bool {
+        // A piece's files are part of the piece, not things to place.
+        if item.piece_media {
+            return false;
+        }
         let imported = item.origin.is_none();
         match filter {
             MediaFilter::All => imported,
@@ -386,6 +390,22 @@ mod tests {
             });
         }
         project
+    }
+
+    #[test]
+    fn media_that_came_with_a_piece_stays_out_of_the_bin() {
+        let inside = MediaItem {
+            id: "m9".to_owned(),
+            piece_media: true,
+            ..MediaItem::default()
+        };
+        let imported = MediaItem {
+            id: "m10".to_owned(),
+            ..MediaItem::default()
+        };
+        assert!(!MediaBin::shows(MediaFilter::All, &inside));
+        assert!(!MediaBin::shows(MediaFilter::Video, &inside));
+        assert!(MediaBin::shows(MediaFilter::All, &imported));
     }
 
     #[test]

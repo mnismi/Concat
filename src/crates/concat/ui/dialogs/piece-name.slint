@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+
+import { I18n } from "../i18n.slint";
+import { Glyph } from "../icons.slint";
+import { Button, DialogRow, DialogSection, Field, Modal } from "../primitives/modal.slint";
+
+// What a piece is called: asked when one is saved, and again to rename one
+// from its card on the shelf.
+
+export struct PieceNameData {
+    open: bool,
+    /// The name as it stands, typed or proposed.
+    name: string,
+}
+
+export component PieceNameDialog inherits Modal {
+    in property <PieceNameData> data;
+
+    callback name-edited(name: string);
+    callback apply();
+
+    open: root.data.open;
+    title: I18n.t("pieceName.title");
+    glyph: Glyph.slot;
+    surface-width: 380px;
+
+    VerticalLayout {
+        DialogSection {
+            first: true;
+
+            DialogRow {
+                Field {
+                    value: root.data.name;
+                    edited(text) => { root.name-edited(text); }
+                }
+            }
+        }
+
+        VerticalLayout {
+            padding: 14px;
+
+            Button {
+                block: true;
+                primary: true;
+                large: true;
+                glyph: Glyph.check;
+                label: I18n.t("pieceName.save");
+                enabled: root.data.name != "";
+                clicked => { root.apply(); }
+            }
+        }
+    }
+}

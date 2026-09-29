@@ -17,6 +17,7 @@ import {
 } from "../inspector/grading.slint";
 import { TextPanel } from "../inspector/text-panel.slint";
 import { AnimationPresetData, AnimationsPanel } from "../inspector/animations-panel.slint";
+import { PiecePanel, PieceTextData } from "../inspector/piece-panel.slint";
 import {
     ClipField, ClipKind, ClipTextField, SelectedClipData,
 } from "../timeline/model.slint";
@@ -206,6 +207,9 @@ export component ConfigPane inherits Rectangle {
     in property <[AnimationPresetData]> animation-presets-out;
     in property <[AnimationPresetData]> animation-effects-in;
     in property <[AnimationPresetData]> animation-effects-out;
+    /// The Piece tab's titles, and one of them given new words.
+    in property <[PieceTextData]> piece-texts;
+    callback piece-text-set(inner: string, text: string);
     callback animation-pick(out: bool, id: string);
     callback animation-length-set(out: bool, seconds: float);
     callback animation-replay(out: bool);
@@ -231,14 +235,18 @@ export component ConfigPane inherits Rectangle {
     /// "nothing here". Its chain is its own, though - the look or effect it
     /// was dropped as, with knobs that can ride - so Effects stays.
     property <bool> is-layer: root.selected.kind == ClipKind.filter;
-    property <[string]> tabs: root.is-text ? ["Text", "Effects", "Animations"]
+    /// A placed piece is sealed: one tab, for the little it lets change.
+    property <bool> is-piece: root.selected.kind == ClipKind.piece;
+    property <[string]> tabs: root.is-piece ? ["Piece"]
+        : root.is-text ? ["Text", "Effects", "Animations"]
         : root.is-layer ? ["Filter", "Effects"]
         : root.is-image ? ["Video", "Effects", "Animations"]
         : root.is-audio ? ["Audio"]
         : ["Video", "Audio", "Effects", "Animations"];
     /// The same tabs in the interface's language. `tabs` stays English,
     /// because the panels are picked by comparing against it.
-    property <[string]> tabs-shown: root.is-text ? [I18n.t("common.text"), I18n.t("common.effects"), I18n.t("configPane.animations")]
+    property <[string]> tabs-shown: root.is-piece ? [I18n.t("configPane.piece")]
+        : root.is-text ? [I18n.t("common.text"), I18n.t("common.effects"), I18n.t("configPane.animations")]
         : root.is-layer ? [I18n.t("configPane.filter"), I18n.t("common.effects")]
         : root.is-image ? [I18n.t("common.video"), I18n.t("common.effects"), I18n.t("configPane.animations")]
         : root.is-audio ? [I18n.t("common.audio")]
@@ -277,6 +285,7 @@ export component ConfigPane inherits Rectangle {
         : root.heading == "Effects" ? ["Effects"]
         : root.heading == "Text" ? ["Text"]
         : root.heading == "Animations" ? ["Animations"]
+        : root.heading == "Piece" ? ["Piece"]
         : ["Layer"];
     /// The sections as the dropdown shows them; see `tabs-shown`.
     property <[string]> sections-shown: root.heading == "Video"
@@ -287,6 +296,7 @@ export component ConfigPane inherits Rectangle {
         : root.heading == "Effects" ? [I18n.t("common.effects")]
         : root.heading == "Text" ? [I18n.t("common.text")]
         : root.heading == "Animations" ? [I18n.t("configPane.animations")]
+        : root.heading == "Piece" ? [I18n.t("configPane.piece")]
         : [I18n.t("common.layer")];
 
     // Each tab remembers its own section, so flipping to Audio and back
@@ -589,6 +599,14 @@ export component ConfigPane inherits Rectangle {
                     curve-point(key, point, x, y) => { root.curve-point(-1, key, point, x, y); }
                     curve-remove(key, point) => { root.curve-remove(-1, key, point); }
                     commit => { root.clip-commit(); }
+                }
+
+                if root.showing == "Piece": PiecePanel {
+                    selected: root.selected;
+                    texts: root.piece-texts;
+                    set(field, value) => { root.clip-set(field, value); }
+                    commit => { root.clip-commit(); }
+                    text-set(inner, text) => { root.piece-text-set(inner, text); }
                 }
 
                 if root.showing == "Layer": FilterPanel {
