@@ -840,6 +840,9 @@ impl IdMint {
         for item in &project.media {
             self.adopt(&item.id);
         }
+        for piece in &project.pieces {
+            self.adopt(&piece.id);
+        }
         for timeline in &project.timelines {
             self.adopt(&timeline.id);
             for track in &timeline.tracks {

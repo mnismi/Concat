@@ -1059,6 +1059,7 @@ fn kind_of(clip: &Clip) -> ClipKind {
         model::ClipKind::Image => ClipKind::Image,
         model::ClipKind::Text => ClipKind::Text,
         model::ClipKind::Layer => ClipKind::Filter,
+        model::ClipKind::Piece => ClipKind::Piece,
     }
 }
 
@@ -2278,8 +2279,12 @@ impl Studio {
                         model::ClipKind::Video | model::ClipKind::Image => LANE_LARGE,
                         model::ClipKind::Audio => LANE_MEDIUM,
                         // A title is its name strip alone; a layer has no
-                        // picture at all. Neither needs a body's height.
-                        model::ClipKind::Text | model::ClipKind::Layer => LANE_SMALL,
+                        // picture at all; a piece is sealed, its inside
+                        // shown on the stage and not in the lane. None
+                        // needs a body's height.
+                        model::ClipKind::Text | model::ClipKind::Layer | model::ClipKind::Piece => {
+                            LANE_SMALL
+                        }
                     })
                     .fold(0.0_f32, f32::max);
                 if tallest > 0.0 { tallest } else { LANE_MEDIUM }

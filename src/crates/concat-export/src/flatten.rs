@@ -77,7 +77,7 @@ pub fn flatten_timeline_in(
                 ModelClipKind::Image => ClipKind::Image,
                 // Handled above; unreachable spelled as a skip so a new
                 // kind fails soft.
-                ModelClipKind::Text | ModelClipKind::Layer => return None,
+                ModelClipKind::Text | ModelClipKind::Layer | ModelClipKind::Piece => return None,
             };
             let (entrance, exit) = export_animations(clip);
             Some(ExportClip {

@@ -1733,7 +1733,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     ClipKind::Video => (theme.get_kind_video(), theme.get_kind_video_well()),
                     ClipKind::Audio => (theme.get_kind_audio(), theme.get_kind_audio_well()),
                     ClipKind::Image => (theme.get_kind_image(), theme.get_kind_image_well()),
-                    ClipKind::Text => (theme.get_kind_text(), theme.get_kind_text_well()),
+                    ClipKind::Text | ClipKind::Piece => {
+                        (theme.get_kind_text(), theme.get_kind_text_well())
+                    }
                     ClipKind::Filter => (theme.get_kind_filter(), theme.get_kind_filter_well()),
                 };
                 let wave = studio

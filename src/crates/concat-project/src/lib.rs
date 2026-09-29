@@ -25,6 +25,7 @@ pub mod commands;
 pub mod doc;
 pub mod editor;
 pub mod model;
+pub mod pieces;
 pub mod speed;
 
 pub use commands::{Command, CommandError, Outcome, why_not_merge};
@@ -4463,6 +4464,7 @@ mod tests {
             has_audio: false,
             audio_tracks: vec![],
             placeholder: false,
+            piece_media: false,
             color_range: None,
             color_space: Default::default(),
             origin: None,
@@ -4502,6 +4504,7 @@ mod tests {
             has_audio: false,
             audio_tracks: vec![],
             placeholder: false,
+            piece_media: false,
             color_range: None,
             color_space: Default::default(),
             origin: None,
