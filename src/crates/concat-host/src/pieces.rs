@@ -370,7 +370,13 @@ mod tests {
         let root = scratch("names");
         let config = root.join("config");
         let (editor, clip) = one_clip(&root.join("mine"), "hand.png", b"png");
-        save(&config, editor.project(), &[clip.clone()], "Point").expect("saves");
+        save(
+            &config,
+            editor.project(),
+            std::slice::from_ref(&clip),
+            "Point",
+        )
+        .expect("saves");
         assert!(save(&config, editor.project(), &[clip], "Point").is_err());
         assert_eq!(unique_name(&config, "Point"), "Point 2");
         assert!(delete(&config, &root.join("mine").to_string_lossy()).is_err());
