@@ -39,8 +39,9 @@ export struct TimelineTabData {
 /// timeline gets by typing its tracks — arrived at here without typing them,
 /// which matters because these lanes are deliberately untyped and a mixed one
 /// still has to be right. The other three are the override, per lane, from
-/// the dropdown in its header.
-export enum TrackSize { auto, small, medium, large }
+/// the dropdown in its header, and `custom` is a height dragged by hand off
+/// the header's foot.
+export enum TrackSize { auto, small, medium, large, custom }
 
 /// One lane. Deliberately untyped: any media goes on any track, which is why
 /// every lane carries both a visibility and a mute switch rather than one or

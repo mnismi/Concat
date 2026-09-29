@@ -837,6 +837,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
     editor.on_track_sized(on_window!(|state, row: i32, size: TrackSize| {
         state.set_lane_size(row, size);
     }));
+    editor.on_track_resized(on_lanes!(|state, row: i32, height: f32| {
+        state.set_lane_height(row, height);
+    }));
     editor.on_track_removed(on_window!(|state, row: i32| {
         let Some(id) = state.row_track(row).map(|track| track.id.clone()) else {
             return;

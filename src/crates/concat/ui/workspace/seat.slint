@@ -441,6 +441,7 @@ export component Seat inherits Rectangle {
                 Editor.track-flag-changed(index, visible, muted, locked);
             }
             track-sized(index, size) => { Editor.track-sized(index, size); }
+            track-resized(index, height) => { Editor.track-resized(index, height); }
             track-removed(index) => { Editor.track-removed(index); }
         }
 

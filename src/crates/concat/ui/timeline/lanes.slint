@@ -178,13 +178,14 @@ component Clip inherits Rectangle {
     property <length> chip-w: Math.max(root.chip, 14px);
     property <length> body-h: Math.max(0px, root.height - root.header-h);
     /// The sound band at the foot of a video clip: its file's waveform
-    /// under its frames, a third of the body and never a sliver, and there
+    /// under its frames, a third of the body and never a sliver - and no
+    /// ceiling, so a lane dragged taller gives the sound its share - and there
     /// whether or not the file has sound - a silent file shows the empty
     /// band, so a video that has gone quiet is tellable from one that
     /// never spoke. https://github.com/jub0t/Concat/issues/137
     property <bool> banded: root.item.kind == ClipKind.video;
     property <length> band-h: root.banded
-        ? Math.clamp(root.body-h * 0.34, 8px, 30px)
+        ? Math.max(root.body-h * 0.34, 8px)
         : 0px;
     /// What the frames get: the body less the band.
     property <length> frames-h: Math.max(0px, root.body-h - root.band-h);

@@ -394,6 +394,8 @@ export global Editor {
     callback dropped(payload: string, seconds: float, y: length);
     callback track-flag-changed(index: int, visible: bool, muted: bool, locked: bool);
     callback track-sized(index: int, size: TrackSize);
+    /// A lane's foot dragged to `height` logical pixels.
+    callback track-resized(index: int, height: float);
     callback track-removed(index: int);
     /// A tab dragged to a new place in the strip. `to` is counted with the
     /// tab already out of its old slot, the way MoveTimeline counts.

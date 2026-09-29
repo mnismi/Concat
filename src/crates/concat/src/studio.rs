@@ -90,6 +90,9 @@ pub const MIN_DURATION: f32 = 1.0 / 60.0;
 const LANE_LARGE: f32 = 108.0;
 const LANE_MEDIUM: f32 = 80.0;
 const LANE_SMALL: f32 = 44.0;
+/// The tallest a lane can be dragged: room for a waveform worth reading
+/// without one lane taking the whole stack.
+const LANE_TALLEST: f32 = 320.0;
 
 /// How long a title runs when it is placed: long enough to read, short
 /// enough that trimming it is a nudge rather than a fight.
@@ -2260,6 +2263,11 @@ impl Studio {
             TrackSize::Small => LANE_SMALL,
             TrackSize::Medium => LANE_MEDIUM,
             TrackSize::Large => LANE_LARGE,
+            TrackSize::Custom => self
+                .lanes
+                .lane_view
+                .get(&lane.id)
+                .map_or(LANE_MEDIUM, |view| view.height),
             TrackSize::Auto => {
                 let tallest = self
                     .timeline()
@@ -9657,6 +9665,19 @@ impl Studio {
     pub fn set_lane_size(&mut self, row: i32, size: TrackSize) {
         if let Some(id) = self.row_track(row).map(|track| track.id.clone()) {
             self.lanes.lane_view.entry(id).or_default().size = size;
+        }
+    }
+
+    /// A lane's foot dragged: any height between the smallest size and the
+    /// tallest a lane goes, kept as the lane's own until a size is picked.
+    pub fn set_lane_height(&mut self, row: i32, height: f32) {
+        if !height.is_finite() {
+            return;
+        }
+        if let Some(id) = self.row_track(row).map(|track| track.id.clone()) {
+            let view = self.lanes.lane_view.entry(id).or_default();
+            view.size = TrackSize::Custom;
+            view.height = height.clamp(LANE_SMALL, LANE_TALLEST);
         }
     }
 

@@ -43,8 +43,10 @@ component SizeMenu inherits Rectangle {
     property <length> row-h: 24px;
     /// The two directions between a TrackSize and its row. Slint has no map,
     /// and four values do not earn one.
+    /// A dragged height is none of the rows, so none is ticked.
     pure function chosen() -> int {
-        return root.current == TrackSize.small ? 1
+        return root.current == TrackSize.custom ? -1
+            : root.current == TrackSize.small ? 1
             : root.current == TrackSize.medium ? 2
             : root.current == TrackSize.large ? 3
             : 0;
@@ -130,6 +132,8 @@ component Header inherits Rectangle {
 
     callback flag-changed(visible: bool, muted: bool, locked: bool);
     callback sized(size: TrackSize);
+    /// The foot dragged to a new height, in logical pixels.
+    callback resized(height: float);
     callback removed();
 
     Rectangle {
@@ -231,6 +235,33 @@ component Header inherits Rectangle {
             }
         }
     }
+
+    // The foot: drag it to make the lane any height, the way a lane is
+    // sized in every other editor; a double click hands it back to Auto.
+    // Over the row, so it wins the press along the bottom edge. The grip
+    // rides the edge it moves, so the pointer's offset from where it
+    // pressed is the change since the last move, not since the press.
+    foot := TouchArea {
+        x: 0;
+        y: parent.height - self.height;
+        width: parent.width;
+        height: 6px;
+        mouse-cursor: row-resize;
+        moved => {
+            if (self.pressed) {
+                root.resized((root.track.height + self.mouse-y - self.pressed-y) / 1px);
+            }
+        }
+        double-clicked => { root.sized(TrackSize.auto); }
+    }
+
+    if foot.has-hover || foot.pressed: Rectangle {
+        x: 0;
+        y: parent.height - 2px;
+        width: parent.width;
+        height: 2px;
+        background: Theme.accent;
+    }
 }
 
 export component TrackHeaders inherits Rectangle {
@@ -250,6 +281,7 @@ export component TrackHeaders inherits Rectangle {
 
     callback flag-changed(index: int, visible: bool, muted: bool, locked: bool);
     callback sized(index: int, size: TrackSize);
+    callback resized(index: int, height: float);
     callback removed(index: int);
 
     clip: true;
@@ -288,6 +320,7 @@ export component TrackHeaders inherits Rectangle {
                 root.flag-changed(index, visible, muted, locked);
             }
             sized(size) => { root.sized(index, size); }
+            resized(height) => { root.resized(index, height); }
             removed => { root.removed(index); }
         }
 
