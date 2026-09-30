@@ -26,6 +26,7 @@ mod resolve;
 
 use resolve::{BuiltTimeline, TransitionSpan, Treatment, animation_of, build_timeline, quantise};
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -798,8 +799,29 @@ fn ride(
     true
 }
 
-/// Renders `request` and returns the path written.
-pub fn render(request: &ExportRequest, mut reporter: Reporter<'_>) -> Result<String, String> {
+/// Renders `request` and returns the path written, drawing on a device of
+/// its own; [`render_on`] draws on one the caller lends.
+pub fn render(request: &ExportRequest, reporter: Reporter<'_>) -> Result<String, String> {
+    render_on(request, None, reporter)
+}
+
+/// Renders `request` and returns the path written, drawing on `compositor`
+/// where the caller has one to lend - the window's, a sibling of the
+/// monitor's on the device the window draws with - and on a device of its
+/// own otherwise (see [`WgpuCompositor::new`]).
+///
+/// The window's device has drawn the monitor since the project opened:
+/// whatever the machine and its drivers make of the compositor, they have
+/// made of it already, frame after frame. A device opened for the export
+/// alone is a second road through the drivers, on a thread of its own, and
+/// on Windows laptops with NVIDIA chips it was a road that ended in the
+/// driver at the first frame, taking the app with it and leaving nothing
+/// in the log (issue #202).
+pub fn render_on(
+    request: &ExportRequest,
+    compositor: Option<WgpuCompositor>,
+    mut reporter: Reporter<'_>,
+) -> Result<String, String> {
     if request.clips.is_empty() {
         return Err("there is nothing on the timeline to export".to_owned());
     }
@@ -869,6 +891,7 @@ pub fn render(request: &ExportRequest, mut reporter: Reporter<'_>) -> Result<Str
     let result = (|| -> Result<(), String> {
         render_picture(
             request,
+            compositor,
             rate,
             total_frames,
             &visible,
@@ -1065,13 +1088,12 @@ fn ground_layer(ground: Frame) -> PlannedLayer {
     PlannedLayer::picture(concat_render::detached_clip(), std::sync::Arc::new(ground))
 }
 
-/// The compositor an export draws with: the machine's GPU, or its software
-/// adapter where it has none (see [`WgpuCompositor::new`]). The one error is
-/// a machine with neither, which is said in words a person can act on.
-fn best_compositor() -> Result<Box<dyn Compositor>, String> {
-    WgpuCompositor::new()
-        .map(|gpu| Box::new(gpu) as Box<dyn Compositor>)
-        .ok_or_else(|| NO_RENDERER.to_owned())
+/// The compositor an export draws with when its caller lends none: a
+/// device of its own on the machine's GPU, or on its software adapter where
+/// it has none (see [`WgpuCompositor::new`]). The one error is a machine
+/// with neither, which is said in words a person can act on.
+fn best_compositor() -> Result<WgpuCompositor, String> {
+    WgpuCompositor::new().ok_or_else(|| NO_RENDERER.to_owned())
 }
 
 /// What an export or a preview says on a machine that offers no GPU and no
@@ -1096,6 +1118,7 @@ fn headless<T>(draw: impl FnOnce(&mut WgpuCompositor) -> T) -> Result<T, String>
 /// Composites every frame of the timeline into a soundless video file.
 fn render_picture(
     request: &ExportRequest,
+    compositor: Option<WgpuCompositor>,
     rate: FrameRate,
     total_frames: i64,
     visible: &[&ExportClip],
@@ -1103,7 +1126,19 @@ fn render_picture(
     destination: &Path,
     reporter: &mut Reporter<'_>,
 ) -> Result<(), String> {
-    let mut compositor = best_compositor()?;
+    let mut compositor = match compositor {
+        Some(lent) => lent,
+        None => best_compositor()?,
+    };
+    // Which chip and API the file is drawn on: the first thing a report of
+    // an export gone wrong needs to say, and until now could not (#202).
+    let adapter = compositor.adapter_info();
+    log::info!(
+        "export: drawing on {} ({:?}, {:?})",
+        adapter.name,
+        adapter.device_type,
+        adapter.backend
+    );
     let BuiltTimeline {
         timeline,
         stills,
@@ -1271,7 +1306,7 @@ fn render_picture(
         }
 
         let composed = composite_treated(
-            &mut *compositor,
+            &mut compositor,
             FramePlan {
                 time,
                 width: request.width,
@@ -1318,10 +1353,29 @@ fn passes_at(
     let Some(effects) = chains.get(&clip) else {
         return Vec::new();
     };
-    let at = timeline
-        .clip(clip)
-        .map_or(0.0, |engine_clip| engine_clip.fraction_at(time));
-    Catalogue::builtin().shader_passes_at(effects, at, reveal_maps.get(&clip).cloned())
+    let engine_clip = timeline.clip(clip);
+    let at = engine_clip.map_or(0.0, |engine_clip| engine_clip.fraction_at(time));
+    let source = engine_clip
+        .and_then(|engine_clip| engine_clip.source_time_at(time))
+        .map(|source| source.as_f64());
+    let live = live_links(effects, source);
+    Catalogue::builtin().shader_passes_at(&live, at, reveal_maps.get(&clip).cloned())
+}
+
+/// The links of `effects` that play at `source`, the frame's instant of
+/// the media: a link with a span sits out the rest of the clip. Borrowed
+/// when nothing is spanned, which is nearly every chain.
+fn live_links(effects: &[AppliedFilter], source: Option<f64>) -> Cow<'_, [AppliedFilter]> {
+    match source {
+        Some(source) if effects.iter().any(|link| link.span.is_some()) => Cow::Owned(
+            effects
+                .iter()
+                .filter(|link| link.live_at(source))
+                .cloned()
+                .collect(),
+        ),
+        _ => Cow::Borrowed(effects),
+    }
 }
 
 /// Draws `plan` with every treatment live at its instant applied to the
@@ -1954,6 +2008,43 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_spanned_effect_is_resolved_only_inside_its_span() {
+        let mut link = AppliedFilter::new("concat.mono");
+        link.span = Some(concat_project::model::Span { from: 4.0, to: 6.0 });
+        let chain = vec![link, AppliedFilter::new("concat.vignette")];
+        assert_eq!(live_links(&chain, Some(3.0)).len(), 1);
+        assert_eq!(live_links(&chain, Some(5.0)).len(), 2);
+        assert_eq!(live_links(&chain, Some(6.0)).len(), 1);
+        // No source time (off the clip) keeps the whole chain, as before.
+        assert_eq!(live_links(&chain, None).len(), 2);
+    }
+
+    #[test]
+    fn a_span_follows_a_sped_up_clip() {
+        let mut timeline = Timeline::new(64, 64, FrameRate::THIRTY);
+        let track = timeline.add_track(Track::new("T0", TrackKind::Video));
+        let mut engine_clip = Clip::new(MediaRef::new("a.mp4"), Rational::ZERO, Rational::from(10));
+        engine_clip.speed = Rational::from(2);
+        let id = timeline.add_clip(track, engine_clip).expect("adds");
+        let mut link = AppliedFilter::new("concat.mono");
+        // Source 4..6 s is timeline 2..3 s at double speed.
+        link.span = Some(concat_project::model::Span { from: 4.0, to: 6.0 });
+        let chains = HashMap::from([(id, vec![link])]);
+        let at = |seconds: i64| {
+            passes_at(
+                &chains,
+                &HashMap::new(),
+                &timeline,
+                id,
+                Rational::from(seconds),
+            )
+            .len()
+        };
+        assert_eq!(at(1), 0);
+        assert_eq!((at(2), at(3)), (1, 0));
+    }
 
     fn clip(kind: &str, track: usize, start: f64, duration: f64, source_start: f64) -> ExportClip {
         let kind_of = match kind {

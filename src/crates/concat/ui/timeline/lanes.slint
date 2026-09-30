@@ -5,7 +5,7 @@ import { Wave } from "../primitives/wave.slint";
 import { Theme } from "../theme/theme.slint";
 import { Fmt, Payload } from "../util.slint";
 import { Glyph, Icon } from "../icons.slint";
-import { ClipData, ClipKind, DropData, TimelineTool, TrackData } from "model.slint";
+import { ClipData, ClipKind, DropData, SilenceShadeData, TimelineTool, TrackData } from "model.slint";
 import { ContextMenu, MenuItemData } from "../primitives/context-menu.slint";
 
 // The lanes: the ruler, the banded track stack, the clips on it, the playhead
@@ -144,6 +144,15 @@ component Clip inherits Rectangle {
     /// the lanes' floor cannot hear through a clip.
     callback hovered(x: length);
     callback hover-ended();
+
+    /// See SPAN_EDGE in studio.rs: an effect bar's press rides the clip's
+    /// own, on an edge code the clip itself never uses.
+    pure function span-edge(entry: int, part: int) -> int {
+        return 16 + entry * 4 + part;
+    }
+    /// How tall one effect bar is, and the grip at either end of it.
+    property <length> span-h: 14px;
+    property <length> span-grip: 8px;
 
     property <color> mark: Paint.mark(root.item.kind);
     property <color> well: Paint.well(root.item.kind);
@@ -565,6 +574,120 @@ component Clip inherits Rectangle {
 
         property <length> origin-x;
         property <length> origin-y;
+    }
+
+    // ── the effects that cover part of the clip ──────────────────────────
+    //
+    // A bar each along the foot, over `touch` so a press on one moves the
+    // bar and not the clip. Its ends resize it, its middle slides it.
+    // Never past the clip: a short span near its tail is widened into
+    // it, not onto the next clip, whose presses it would otherwise take.
+    for span in root.item.spans: Rectangle {
+        width: Math.min(root.width,
+            Math.max(2 * root.span-grip + 2px, span.length * root.px-per-second));
+        x: Math.max(0px, Math.min(span.from * root.px-per-second, root.width - self.width));
+        y: root.height - (span.row + 1) * (root.span-h + 1px) - 1px;
+        height: root.span-h;
+        border-radius: 2px;
+        background: body-touch.pressed || head-touch.pressed || tail-touch.pressed
+            || body-touch.has-hover || head-touch.has-hover || tail-touch.has-hover
+            ? Theme.accent
+            : Theme.accent.with-alpha(0.72);
+
+        if self.width > 40px: Text {
+            x: root.span-grip + 2px;
+            width: parent.width - 2 * (root.span-grip + 2px);
+            height: parent.height;
+            text: span.name;
+            color: Theme.on-accent;
+            font-size: 9px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        // A grip line at either end, so the ends read as handles.
+        Rectangle {
+            x: 3px;
+            y: 3px;
+            width: 2px;
+            height: parent.height - 6px;
+            border-radius: 1px;
+            background: Theme.on-accent.with-alpha(0.45);
+        }
+        Rectangle {
+            x: parent.width - 5px;
+            y: 3px;
+            width: 2px;
+            height: parent.height - 6px;
+            border-radius: 1px;
+            background: Theme.on-accent.with-alpha(0.45);
+        }
+
+        body-touch := TouchArea {
+            x: root.span-grip;
+            width: Math.max(0px, parent.width - 2 * root.span-grip);
+            enabled: !root.locked;
+            mouse-cursor: MouseCursor.move;
+            property <length> origin-x;
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                    self.origin-x = self.absolute-position.x + self.mouse-x;
+                    root.pressed(false, root.span-edge(span.entry, 2));
+                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                    root.released();
+                }
+            }
+            moved => {
+                if (self.pressed) {
+                    root.pointer-at(parent.x + self.x + self.mouse-x);
+                    root.dragged((self.absolute-position.x + self.mouse-x - self.origin-x) / root.px-per-second, 0px);
+                }
+            }
+        }
+
+        head-touch := TouchArea {
+            x: 0;
+            width: root.span-grip;
+            enabled: !root.locked;
+            mouse-cursor: MouseCursor.ew-resize;
+            property <length> origin-x;
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                    self.origin-x = self.absolute-position.x + self.mouse-x;
+                    root.pressed(false, root.span-edge(span.entry, 0));
+                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                    root.released();
+                }
+            }
+            moved => {
+                if (self.pressed) {
+                    root.pointer-at(parent.x + self.x + self.mouse-x);
+                    root.dragged((self.absolute-position.x + self.mouse-x - self.origin-x) / root.px-per-second, 0px);
+                }
+            }
+        }
+
+        tail-touch := TouchArea {
+            x: parent.width - root.span-grip;
+            width: root.span-grip;
+            enabled: !root.locked;
+            mouse-cursor: MouseCursor.ew-resize;
+            property <length> origin-x;
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                    self.origin-x = self.absolute-position.x + self.mouse-x;
+                    root.pressed(false, root.span-edge(span.entry, 1));
+                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                    root.released();
+                }
+            }
+            moved => {
+                if (self.pressed) {
+                    root.pointer-at(parent.x + self.x + self.mouse-x);
+                    root.dragged((self.absolute-position.x + self.mouse-x - self.origin-x) / root.px-per-second, 0px);
+                }
+            }
+        }
     }
 
     // ── the transition overlay & cut seam controls ────────────────────────
@@ -1006,6 +1129,9 @@ export component Lanes inherits Rectangle {
     /// The answer to the last hover. `active` is also the verdict — false is
     /// how the drag is refused, and the cursor says so.
     in property <DropData> drop;
+    /// The spans the open Remove Silences sheet would take out, shaded over
+    /// their clips. Empty while the sheet is closed.
+    in property <[SilenceShadeData]> silence-shades;
 
     property <length> px-per-second: 1px / Math.max(root.seconds-per-pixel, 0.000001);
     property <length> lanes-h: Math.max(0px, root.height - root.ruler-height);
@@ -1411,6 +1537,22 @@ export component Lanes inherits Rectangle {
                     overflow: elide;
                 }
             }
+        }
+
+        // ── the silences the open sheet would take out ───────────────────
+        //
+        // Over the clips and under nothing else. Alpha in the paint, not
+        // `opacity`, for the reason the ghost gives: a long span would
+        // otherwise ask the GPU for a texture as wide as itself.
+        for shade in root.silence-shades: Rectangle {
+            x: root.at(shade.start);
+            y: root.row-y(shade.row) + 4px;
+            width: Math.max(1px, shade.length * root.px-per-second);
+            height: Math.max(2px, root.tracks[shade.row].height - 10px);
+            border-radius: 2px;
+            background: Theme.danger.with-alpha(0.35);
+            border-width: 1px;
+            border-color: Theme.danger.with-alpha(0.7);
         }
 
         // ── the ruler ────────────────────────────────────────────────────

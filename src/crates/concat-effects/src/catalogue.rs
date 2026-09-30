@@ -589,6 +589,7 @@ impl Package {
             params,
             enabled: link.enabled,
             keys: BTreeMap::new(),
+            span: link.span,
         })
     }
 
@@ -1193,6 +1194,7 @@ mod tests {
             params: params.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect(),
             enabled: false,
             keys: BTreeMap::new(),
+            span: None,
         };
         let mut green = link("concat.green-screen", &[("similarity", 40.0)]);
         assert!(catalogue.upgrade(&mut green));

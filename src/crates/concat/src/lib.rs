@@ -22,14 +22,9 @@ use slint::{ModelRc, SharedString, VecModel};
 // object opaque and leaves building and reading one to the host language.
 use slint::private_unstable_api::re_exports::DataTransfer;
 
-// Everything the .slint tree exports, in a module of its own: the workspace
-// lints every public item for documentation, and the generated accessors are
-// thousands of public items nobody documents. The allow covers them and
-// nothing in this file.
-#[allow(missing_docs)]
-mod ui {
-    slint::include_modules!();
-}
+// Everything the .slint tree exports, compiled in concat-ui so that an edit
+// here never re-checks the generated code.
+use concat_ui as ui;
 
 mod chips;
 mod dock;
@@ -59,6 +54,7 @@ use panes::monitor::MonitorMsg;
 use panes::project::ProjectMsg;
 use panes::relink::RelinkMsg;
 use panes::settings::SettingsMsg;
+use panes::silence::SilenceMsg;
 use panes::speech::SpeechMsg;
 use panes::start::StartMsg;
 use panes::timeline::TimelineMsg;
@@ -210,6 +206,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
         editor.set_clips(ModelRc::from(models.clips.clone()));
         editor.set_stage_items(ModelRc::from(models.stage.clone()));
         editor.set_stage_guides(ModelRc::from(models.guides.clone()));
+        editor.set_silence_shades(ModelRc::from(models.silence_shades.clone()));
         editor.set_media(ModelRc::from(models.media.clone()));
         editor.set_video_effects(ModelRc::from(models.video_effects.clone()));
         editor.set_audio_effects(ModelRc::from(models.audio_effects.clone()));
@@ -252,6 +249,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
         app.set_app_menu_items(ModelRc::from(models.bar.clone()));
         app.set_transcribers(ModelRc::from(models.transcribers.clone()));
         app.set_voices(ModelRc::from(models.voices.clone()));
+        app.set_versions(ModelRc::from(models.versions.clone()));
+        app.set_version_details(ModelRc::from(models.version_details.clone()));
         editor.set_seats(ModelRc::from(models.seats.clone()));
         editor.set_dividers(ModelRc::from(models.dividers.clone()));
         app.set_recents(ModelRc::from(models.recents.clone()));
@@ -1022,6 +1021,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
     editor.on_chain_remove(on_window!(|state, audio: bool, index: i32| {
         state.chain_remove(audio, index);
     }));
+    editor.on_chain_span_toggle(on_lanes!(|state, index: i32| {
+        state.chain_span_toggle(index);
+    }));
+    editor.on_chain_span_set(on_lanes!(|state, index: i32, from: f32, to: f32| {
+        state.chain_span_set(index, from, to);
+    }));
     editor.on_chain_set_param(on_lanes!(
         |state, audio: bool, index: i32, key: SharedString, value: f32| {
             state.chain_set_param(audio, index, key.as_str(), value);
@@ -1403,6 +1408,18 @@ pub fn run() -> Result<(), slint::PlatformError> {
     app.on_settings_server_token_generated(on_window!(|state| {
         state.handle(Msg::Settings(SettingsMsg::ServerTokenGenerated));
     }));
+    app.on_settings_check_updates(on_window!(|state| {
+        state.handle(Msg::Settings(SettingsMsg::CheckUpdates));
+    }));
+    app.on_settings_version_chosen(on_window!(|state, index: i32| {
+        state.handle(Msg::Settings(SettingsMsg::VersionChosen(index)));
+    }));
+    app.on_settings_install_version(on_window!(|state| {
+        state.handle(Msg::Settings(SettingsMsg::InstallVersion));
+    }));
+    app.on_settings_install_cancel(on_window!(|state| {
+        state.handle(Msg::Settings(SettingsMsg::InstallCancel));
+    }));
     app.on_model_activated(on_window!(|state, id: SharedString| {
         state.handle(Msg::Settings(SettingsMsg::ModelActivated(id.to_string())));
     }));
@@ -1444,6 +1461,24 @@ pub fn run() -> Result<(), slint::PlatformError> {
     }));
     app.on_captions_cancel(on_window!(|state| {
         state.handle(Msg::Captions(CaptionsMsg::Cancel));
+    }));
+    editor.on_silences(on_window!(|state| {
+        state.handle(Msg::Silence(SilenceMsg::Open));
+    }));
+    app.on_silence_closed(on_window!(|state| {
+        state.handle(Msg::Silence(SilenceMsg::Close));
+    }));
+    app.on_silence_level_changed(on_window!(|state, value: f32| {
+        state.handle(Msg::Silence(SilenceMsg::LevelChanged(value)));
+    }));
+    app.on_silence_min_pause_changed(on_window!(|state, value: f32| {
+        state.handle(Msg::Silence(SilenceMsg::MinPauseChanged(value)));
+    }));
+    app.on_silence_padding_changed(on_window!(|state, value: f32| {
+        state.handle(Msg::Silence(SilenceMsg::PaddingChanged(value)));
+    }));
+    app.on_silence_apply(on_window!(|state| {
+        state.handle(Msg::Silence(SilenceMsg::Apply));
     }));
     app.on_speech_closed(on_window!(|state| {
         state.handle(Msg::Speech(SpeechMsg::Close));

@@ -253,6 +253,23 @@ pub struct AppliedFilter {
         skip_serializing_if = "BTreeMap::is_empty"
     )]
     pub keys: BTreeMap<String, Vec<ParamKey>>,
+    /// The part of the media this link covers, in source seconds - the
+    /// clock of [`Clip::source_start`], so it stays on the same moment of
+    /// the picture through a trim or a cut. None covers the whole clip, as
+    /// every link did before spans existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<Span>,
+}
+
+/// Where an applied effect starts and stops, in source seconds; see
+/// [`AppliedFilter::span`]. `from < to`, both finite, once tidied.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Span {
+    /// Where the effect comes on.
+    pub from: f64,
+    /// Where it goes off; the instant itself is outside.
+    pub to: f64,
 }
 
 fn yes() -> bool {
@@ -280,7 +297,15 @@ impl AppliedFilter {
             params: BTreeMap::new(),
             enabled: true,
             keys: BTreeMap::new(),
+            span: None,
         }
+    }
+
+    /// Whether the link plays at this instant of the media: always, unless
+    /// a span leaves it out.
+    pub fn live_at(&self, source: f64) -> bool {
+        self.span
+            .is_none_or(|span| span.from <= source && source < span.to)
     }
 
     /// This parameter's keys, in order; empty for one that holds still.
@@ -1378,6 +1403,9 @@ impl Clip {
         for chain in [&mut self.filters, &mut self.video_effects] {
             for entry in chain.iter_mut() {
                 entry.sort_keys();
+                entry.span = entry.span.filter(|span| {
+                    span.from.is_finite() && span.to.is_finite() && span.from < span.to
+                });
             }
         }
         self.text = self.text.take().map(TextStyle::tidy);
@@ -1515,6 +1543,66 @@ impl Clip {
         let before = self.keys.len();
         self.keys.retain(|key| key.property != property);
         self.keys.len() != before
+    }
+
+    /// Source seconds at `offset` timeline seconds into the clip: the map
+    /// the engine's `source_time_at` draws, speed curve and all. A still
+    /// has no rate, as the export treats it - and a title leaves the
+    /// window as one.
+    pub fn source_at(&self, offset: f64) -> f64 {
+        if self.unrated() {
+            return self.source_start + offset;
+        }
+        match self.speed_curve.as_deref().and_then(crate::speed::curve_of) {
+            Some(curve) if self.duration > 0.0 => {
+                self.source_start + curve.consumed(offset / self.duration) * self.duration
+            }
+            _ => self.source_start + offset * self.speed,
+        }
+    }
+
+    /// A still or a title: played at one source second a second whatever
+    /// its speed says, as the export plays both.
+    fn unrated(&self) -> bool {
+        matches!(self.kind, ClipKind::Image | ClipKind::Text)
+    }
+
+    /// Timeline seconds into the clip at which `source` plays; the inverse
+    /// of `source_at`, not clamped to the clip - except under a speed
+    /// curve, whose map is only known over the clip.
+    pub fn offset_of(&self, source: f64) -> f64 {
+        let curved = !self.unrated()
+            && self.duration > 0.0
+            && self
+                .speed_curve
+                .as_deref()
+                .and_then(crate::speed::curve_of)
+                .is_some();
+        if !curved {
+            let rate = if self.unrated() {
+                1.0
+            } else {
+                self.speed.max(1e-6)
+            };
+            return (source - self.source_start) / rate;
+        }
+        // A curve's map only ever climbs: halve the clip until it lands.
+        let (mut low, mut high) = (0.0, self.duration);
+        if source <= self.source_at(low) {
+            return low;
+        }
+        if source >= self.source_at(high) {
+            return high;
+        }
+        for _ in 0..60 {
+            let mid = (low + high) / 2.0;
+            if self.source_at(mid) < source {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        (low + high) / 2.0
     }
 
     /// Re-anchors every key - the clip's own and its effects' - after the

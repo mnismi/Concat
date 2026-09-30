@@ -20,7 +20,10 @@ use crate::model::{
 
 mod audio;
 mod clips;
+mod cut;
+
 pub use clips::why_not_merge;
+pub use cut::cut_group;
 mod media;
 mod properties;
 mod timelines;
@@ -539,6 +542,23 @@ pub enum Command {
         #[serde(default)]
         ripple: bool,
     },
+    /// Takes spans out of a clip and closes up its track: what Remove
+    /// Silences applies. `ranges` are source seconds; each is mapped onto
+    /// the timeline through the clip's in-point and speed, clamped to the
+    /// clip, and merged with any neighbour closer than two frames, and a
+    /// span within two frames of an edge reaches it. The clip is split at
+    /// each span and the pieces inside are ripple-removed, so keys, fades
+    /// and transitions go as a hand cut takes them; clips later on the
+    /// track move left, other tracks stay. A video and every sound
+    /// detached from it are cut together, whichever is named. Refused for
+    /// an unknown clip, a clip with a speed curve, or spans that leave
+    /// nothing; no spans is a no-op.
+    RemoveClipRanges {
+        /// The clip to cut: a video, or a sound detached from one.
+        clip_id: String,
+        /// The spans to take out, in source seconds.
+        ranges: Vec<(f64, f64)>,
+    },
     /// Applies a [`ClipPatch`]: only the fields present change, with the
     /// clamps documented on the patch. An unknown clip is a no-op.
     UpdateClip {
@@ -743,6 +763,16 @@ pub enum CommandError {
     /// one stored would poison every duration and key that touched it.
     #[error("A number in that edit is not finite.")]
     NotANumber,
+    /// [`Command::RemoveClipRanges`] named a clip that is not there.
+    #[error("That clip no longer exists.")]
+    ClipGone,
+    /// [`Command::RemoveClipRanges`] on a clip whose speed changes over
+    /// its length: its source map is not a straight line to cut along.
+    #[error("Silences can't be cut from a clip whose speed changes over time.")]
+    SpeedCurveCut,
+    /// [`Command::RemoveClipRanges`] would have taken out the whole clip.
+    #[error("That would remove the whole clip.")]
+    NothingLeft,
 }
 
 /// Mints ids. Owned by the editor so restored projects advance it past every
@@ -855,6 +885,7 @@ impl Command {
                         .values()
                         .flatten()
                         .any(|key| bad([key.at, key.value]) || bad(key.ease.0))
+                    || entry.span.is_some_and(|span| bad([span.from, span.to]))
             })
         }
         match self {
@@ -909,6 +940,9 @@ impl Command {
             Command::MoveClips { moves } => bad(moves.iter().map(|wanted| wanted.start)),
             Command::TrimClip { delta, .. } => bad([*delta]),
             Command::SplitClips { time, .. } => bad([*time]),
+            Command::RemoveClipRanges { ranges, .. } => {
+                bad(ranges.iter().flat_map(|(from, to)| [*from, *to]))
+            }
             Command::FreezeFrame { time, duration, .. } => bad([*time]) || bad(*duration),
             Command::ReplaceClipMedia {
                 item, source_start, ..
@@ -1027,6 +1061,7 @@ pub fn apply(
         | Command::ReplaceClipMedia { .. }
         | Command::MergeClips { .. }
         | Command::RemoveClips { .. }) => clips::apply(project, mint, command),
+        command @ Command::RemoveClipRanges { .. } => cut::apply(project, mint, command),
         command @ (Command::UpdateClip { .. }
         | Command::SetClipSpeed { .. }
         | Command::SetClipCutout { .. }

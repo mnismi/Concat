@@ -122,6 +122,12 @@ export struct AppliedEntryData {
     /// False when no package answers to the id: the row still shows, so the
     /// link can be removed, but it has no knobs and renders nothing.
     known: bool,
+    /// The link covers only part of the clip; `span-from` and `span-to`
+    /// say which, in seconds into it, and `span-max` is the clip's length.
+    spanned: bool,
+    span-from: float,
+    span-to: float,
+    span-max: float,
 }
 
 /// One knob of one link. Flat rather than nested in the entry so a value
@@ -143,8 +149,9 @@ export struct AppliedParamData {
     default-value: float,
     value: float,
     fmt: ParamFormat,
-    /// The knob can carry keys - the Adjust panel's can, a chain's cannot
-    /// yet - and, when it can, the same four facts a ClipKeyData holds:
+    /// The knob can carry keys - the Adjust panel's and a picture chain's
+    /// number knobs can, a sound chain's cannot - and, when it can, the
+    /// same four facts a ClipKeyData holds:
     /// it rides at all, a key sits under the playhead, and there is one
     /// behind or ahead to step to.
     keyable: bool,
@@ -244,6 +251,13 @@ export component PresetStack inherits VerticalLayout {
     callback curve-point(index: int, key: string, point: int, x: float, y: float);
     callback curve-remove(index: int, key: string, point: int);
     callback commit();
+    /// Whether a link offers to cover only part of its clip: the picture
+    /// chain of a clip does; a sound chain and a layer's do not.
+    in property <bool> spans: false;
+    /// A link limited to part of the clip, or handed the whole clip back.
+    callback span-toggle(index: int);
+    /// A limited link's part from typed times, in seconds into the clip.
+    callback span-set(index: int, from: float, to: float);
 
     // The grid. Three columns at the inspector's width, which puts a tile at
     // about 70px - wide enough for "Voice Focus" on two lines and narrow
@@ -377,6 +391,54 @@ export component PresetStack inherits VerticalLayout {
                             }
                         }
 
+                        // Where the link plays: the whole clip, or a part of
+                        // it the bar on the lanes shows and these two set.
+                        if root.spans: HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 6px;
+
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.t("clipInspector.plays");
+                                color: Theme.fg-dim;
+                                font-size: Theme.fs-xs;
+                                vertical-alignment: center;
+                            }
+
+                            Button {
+                                label: item.spanned
+                                    ? I18n.t("clipInspector.partOfClip")
+                                    : I18n.t("clipInspector.wholeClip");
+                                enabled: item.on;
+                                clicked => { root.span-toggle(index); }
+                            }
+                        }
+
+                        if root.spans && item.spanned: Param {
+                            label: I18n.t("clipInspector.spanStarts");
+                            value: item.span-from;
+                            minimum: 0;
+                            maximum: item.span-max;
+                            step: 0.01;
+                            default-value: 0;
+                            fmt: ParamFormat.seconds2;
+                            enabled: item.on;
+                            changed(v) => { root.span-set(index, v, item.span-to); root.commit(); }
+                        }
+
+                        if root.spans && item.spanned: Param {
+                            label: I18n.t("clipInspector.spanEnds");
+                            value: item.span-to;
+                            minimum: 0;
+                            maximum: item.span-max;
+                            step: 0.01;
+                            default-value: item.span-max;
+                            fmt: ParamFormat.seconds2;
+                            enabled: item.on;
+                            changed(v) => { root.span-set(index, item.span-from, v); root.commit(); }
+                        }
+
                         // One control per parameter the package declares. The
                     // knob writes to its own `value`, which drops a binding,
                     // so the row re-seeds it whenever Rust republishes the
@@ -398,6 +460,18 @@ export component PresetStack inherits VerticalLayout {
                                 fmt: p.fmt;
                                 unit: p.unit;
                                 enabled: item.on;
+                                // A picture link's number knob keys as an
+                                // Adjust knob does, named by its link and
+                                // key; a sound chain's is never keyable.
+                                keyable: p.keyable;
+                                key-name: "\{p.entry}#\{p.key}";
+                                key-state: {
+                                    field: ClipField.scale,
+                                    keyed: p.keyed,
+                                    here: p.here,
+                                    prev: p.prev,
+                                    next: p.next,
+                                };
                                 changed(v) => {
                                     root.set-param(index, p.key, v);
                                     root.commit();

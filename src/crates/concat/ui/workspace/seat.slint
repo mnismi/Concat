@@ -242,6 +242,8 @@ export component Seat inherits Rectangle {
             chain-set-param(audio, index, key, value) => {
                 Editor.chain-set-param(audio, index, key, value);
             }
+            chain-span-toggle(index) => { Editor.chain-span-toggle(index); }
+            chain-span-set(index, from, to) => { Editor.chain-span-set(index, from, to); }
             brush-tool: Editor.brush-tool;
             brush-size: Editor.brush-size;
             painting: Editor.painting;
@@ -365,6 +367,8 @@ export component Seat inherits Rectangle {
             can-undo: Editor.can-undo;
             can-redo: Editor.can-redo;
             merge-blocked-because: Editor.merge-blocked-because;
+            silence-blocked-because: Editor.silence-blocked-because;
+            silence-shades: Editor.silence-shades;
             sound-selected: Editor.sound-selected;
             title-selected: Editor.title-selected;
             picture-selected: Editor.picture-selected;
@@ -396,6 +400,7 @@ export component Seat inherits Rectangle {
             merge => { Editor.merge(); }
             delete-selected => { Editor.delete-selected(); }
             captions => { Editor.captions(); }
+            silences => { Editor.silences(); }
             speak => { Editor.speak(); }
             add-track => { Editor.add-track(); }
             zoom-to-fit(width) => { Editor.zoom-to-fit(width); }

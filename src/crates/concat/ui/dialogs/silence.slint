@@ -1,0 +1,145 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme/theme.slint";
+import { Glyph } from "../icons.slint";
+import { Button, DialogRow, DialogSection, Modal } from "../primitives/modal.slint";
+import { NumberField } from "../primitives/number-field.slint";
+
+// Remove Silences: what the tray's tool opens over the selected clips.
+//
+// Three numbers say what a pause is. The line under them says what they
+// find, recomputed in Rust as they move, and the lanes shade the same
+// spans while the sheet is open. One button cuts them all, one undo step.
+
+export struct SilenceSheetData {
+    open: bool,
+    /// dBFS, -60..-20
+    level: float,
+    /// seconds, 0.1..3
+    min-pause: float,
+    /// seconds, 0..0.5
+    padding: float,
+    /// what the settings find, or why nothing will be cut
+    summary: string,
+    /// the clips left out and why; empty when none are
+    skipped: string,
+    /// Apply has something to cut
+    ready: bool,
+}
+
+export component SilenceDialog inherits Modal {
+    in property <SilenceSheetData> data;
+
+    callback level-changed(value: float);
+    callback min-pause-changed(value: float);
+    callback padding-changed(value: float);
+    callback apply();
+
+    open: root.data.open;
+    title: I18n.t("tray.removeSilences");
+    glyph: Glyph.waveform;
+    surface-width: 420px;
+
+    // The fields own their numbers while they are dragged. Rust's copy comes
+    // back on every publish as the same number, so they are re-seeded from
+    // it rather than bound to it, the way the captions sheet holds its draft.
+    property <float> draft-level;
+    property <float> draft-min-pause;
+    property <float> draft-padding;
+    function seed() {
+        root.draft-level = root.data.level;
+        root.draft-min-pause = root.data.min-pause;
+        root.draft-padding = root.data.padding;
+    }
+    changed data => { root.seed(); }
+    init => { root.seed(); }
+
+    VerticalLayout {
+        DialogSection {
+            first: true;
+            title: I18n.t("silence.detection");
+
+            DialogRow {
+                label: I18n.t("silence.silenceLevel");
+                NumberField {
+                    value <=> root.draft-level;
+                    minimum: -60;
+                    maximum: -20;
+                    step: 1;
+                    precision: 0;
+                    unit: "dB";
+                    changed(value) => { root.level-changed(value); }
+                }
+            }
+
+            DialogRow {
+                label: I18n.t("silence.minimumPause");
+                NumberField {
+                    value <=> root.draft-min-pause;
+                    minimum: 0.1;
+                    maximum: 3;
+                    step: 0.1;
+                    precision: 1;
+                    unit: "s";
+                    changed(value) => { root.min-pause-changed(value); }
+                }
+            }
+
+            DialogRow {
+                label: I18n.t("silence.padding");
+                NumberField {
+                    value <=> root.draft-padding;
+                    minimum: 0;
+                    maximum: 0.5;
+                    step: 0.05;
+                    precision: 2;
+                    unit: "s";
+                    changed(value) => { root.padding-changed(value); }
+                }
+            }
+
+            Text {
+                text: root.data.summary;
+                color: root.data.ready ? Theme.fg : Theme.fg-muted;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+            }
+
+            if root.data.skipped != "": Text {
+                text: root.data.skipped;
+                color: Theme.fg-dim;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Theme.line;
+        }
+
+        HorizontalLayout {
+            padding: 14px;
+            spacing: 8px;
+
+            Button {
+                label: I18n.t("common.cancel");
+                glyph: Glyph.close;
+                ghost: true;
+                clicked => { root.closed(); }
+            }
+
+            Button {
+                horizontal-stretch: 1;
+                primary: true;
+                large: true;
+                glyph: Glyph.razor;
+                label: I18n.t("silence.removePauses");
+                enabled: root.data.ready;
+                clicked => { root.apply(); }
+            }
+        }
+    }
+}

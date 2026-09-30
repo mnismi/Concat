@@ -79,6 +79,26 @@ export struct StripData {
     span: float,
 }
 
+/// One effect on a clip that covers only part of it, as the bar along the
+/// clip's foot draws it. Seconds are into the clip, already clipped to it.
+/// A span the open Remove Silences sheet would take out, as the lanes
+/// shade it. Seconds on the timeline.
+export struct SilenceShadeData {
+    row: int,
+    start: float,
+    length: float,
+}
+
+export struct EffectSpanData {
+    /// which link of the picture chain, handed back on a drag
+    entry: int,
+    name: string,
+    from: float,
+    length: float,
+    /// stacking row, 0 at the foot, for spans that overlap
+    row: int,
+}
+
 /// One placed clip, already reduced to what drawing it needs.
 ///
 /// Positions are in *seconds*, not pixels. Zoom and pan are then a property
@@ -121,6 +141,9 @@ export struct ClipData {
     /// The frames a picture clip tiles along its body; `frames` is 0 when
     /// there are none yet.
     strip: StripData,
+    /// The effects that cover only part of the clip: a bar each along its
+    /// foot, dragged to move or resize the part.
+    spans: [EffectSpanData],
 }
 
 
@@ -214,8 +237,9 @@ export global Keyframes {
     callback clear(field: ClipField);
 
     /// The same three verbs for a knob named rather than enumerated - the
-    /// Adjust panel's, whose rows come from the colour package's manifest
-    /// and carry their own key state; see AppliedParamData.
+    /// Adjust panel's by its bare key, a picture chain link's as
+    /// `<entry>#<key>` - whose rows come from a package's manifest and
+    /// carry their own key state; see AppliedParamData.
     callback toggle-param(key: string);
     callback step-param(key: string, delta: int);
     callback clear-param(key: string);

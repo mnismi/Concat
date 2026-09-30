@@ -21,6 +21,7 @@ pub mod monitor;
 pub mod project;
 pub mod relink;
 pub mod settings;
+pub mod silence;
 pub mod speech;
 pub mod start;
 pub mod timeline;
@@ -34,6 +35,8 @@ pub enum Msg {
     Settings(settings::SettingsMsg),
     /// To the captions sheet.
     Captions(captions::CaptionsMsg),
+    /// To the Remove Silences sheet.
+    Silence(silence::SilenceMsg),
     /// To the speech sheet.
     Speech(speech::SpeechMsg),
     /// To the missing media dialog.
