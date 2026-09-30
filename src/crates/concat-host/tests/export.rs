@@ -740,6 +740,91 @@ fn removing_silences_leaves_only_the_sound() {
     exported.expect_second(2.5, 5);
 }
 
+/// Clip animations reach the picture: a red clip that fades in over its
+/// first second and out over its last starts black, is red in the middle,
+/// and is black again at its end.
+#[test]
+fn an_animation_reaches_the_picture() {
+    use concat_project::commands::AnimationSlot;
+    use concat_project::model::ClipAnimation;
+
+    let scratch = Scratch::new("animations");
+    let red_path = scratch.path().join("red.mp4");
+    let red = [220, 30, 30];
+    solid(&red_path, red);
+    let mut studio = Studio::new(scratch.path(), "Animations", video(WIDTH, HEIGHT, 30, 1));
+    let media = studio.import(&red_path);
+    let clip = studio
+        .apply(Command::AddClipAtFirstFree {
+            media_id: media,
+            start: 0.0,
+        })
+        .expect("placed");
+    for (slot, id) in [
+        (AnimationSlot::In, "fade-in"),
+        (AnimationSlot::Out, "fade-out"),
+    ] {
+        studio.apply(Command::SetClipAnimation {
+            clip_id: clip.clone(),
+            slot,
+            animation: Some(ClipAnimation {
+                id: id.to_owned(),
+                duration: 1.0,
+            }),
+        });
+    }
+    let exported = studio.export("fade in and out");
+    exported.expect_colours(0.0, &[((0.5, 0.5), [0, 0, 0])]);
+    exported.expect_colours(1.5, &[((0.5, 0.5), red)]);
+    exported.expect_colours(2.95, &[((0.5, 0.5), [0, 0, 0])]);
+}
+
+/// An effect preset reaches the picture: quadrants that glitch in over a
+/// second are torn at their first frame and whole by a second and a half.
+#[test]
+fn an_effect_animation_reaches_the_picture() {
+    use concat_project::commands::AnimationSlot;
+    use concat_project::model::ClipAnimation;
+
+    let scratch = Scratch::new("effect-animations");
+    let path = scratch.path().join("quadrants.mp4");
+    quadrants(&path);
+    let mut studio = Studio::new(scratch.path(), "Glitch", video(WIDTH, HEIGHT, 30, 1));
+    let media = studio.import(&path);
+    let clip = studio
+        .apply(Command::AddClipAtFirstFree {
+            media_id: media,
+            start: 0.0,
+        })
+        .expect("placed");
+    let still = studio.export("no animation");
+    studio.apply(Command::SetClipAnimation {
+        clip_id: clip,
+        slot: AnimationSlot::In,
+        animation: Some(ClipAnimation {
+            id: "glitch-in".to_owned(),
+            duration: 1.0,
+        }),
+    });
+    let glitched = studio.export("glitch in");
+    let differs = |a: &Frame, b: &Frame| {
+        a.pixels()
+            .chunks(4)
+            .zip(b.pixels().chunks(4))
+            .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 40))
+            .count()
+    };
+    let pixels = (WIDTH * HEIGHT) as usize;
+    assert!(
+        differs(&still.frames[0], &glitched.frames[0]) > pixels / 100,
+        "the first frame is torn"
+    );
+    assert!(
+        differs(&still.frames[45], &glitched.frames[45]) < pixels / 200,
+        "the frame at 1.5 s is whole"
+    );
+}
+
 /// Issue #202: on Windows laptops with NVIDIA chips an export took the app
 /// down at its first frame, with nothing in the log. The export had opened
 /// a device of its own through every API wgpu was built with, where the

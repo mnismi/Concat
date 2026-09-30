@@ -24,6 +24,7 @@ import { ContextMenu, MenuItemData, MenuRow } from "primitives/context-menu.slin
 import { ExportData, ExportDialog, ExportPhase } from "dialogs/export.slint";
 import { ModelData, SettingsData, SettingsDialog, SystemFactData } from "dialogs/settings.slint";
 import { ProjectDialog, ProjectSheetData } from "dialogs/project.slint";
+import { PieceNameData, PieceNameDialog } from "dialogs/piece-name.slint";
 import { RelinkDialog, RelinkData, MissingMediaItem } from "dialogs/relink.slint";
 import { CaptionsDialog, CaptionsSheetData } from "dialogs/captions.slint";
 import { SilenceDialog, SilenceSheetData } from "dialogs/silence.slint";
@@ -38,6 +39,8 @@ import {
     AppliedEntryData, AppliedParamData, CatalogueEntryData, Library, LibraryViewData,
 } from "inspector/clip-inspector.slint";
 import { ParamFormat } from "inspector/controls.slint";
+import { AnimationPresetData } from "inspector/animations-panel.slint";
+import { PieceTextData } from "inspector/piece-panel.slint";
 import { ToastData, ToastLayer } from "primitives/toast.slint";
 import { TooltipLayer } from "primitives/tooltip.slint";
 import { Workspace } from "workspace/workspace.slint";
@@ -60,8 +63,8 @@ export {
     KeyEditor, KeyMarkData, KeyRowData, ScopeMarkData, Scopes,
     SelectedClipData, StageGuideData, SilenceShadeData, StageItemData, TextAlignment, TimelineTabData,
     TimelineTool, TrackData, TrackSize, MenuItemData, MenuRow, ExportData, ExportPhase, ModelData, SettingsData,
-    ChipOption, RecentProjectData, StartData, SystemFactData, ToastData, ProjectSheetData,
-    CaptionsSheetData, SilenceSheetData, SpeechSheetData,
+    ChipOption, RecentProjectData, StartData, SystemFactData, ToastData, ProjectSheetData, PieceNameData,
+    CaptionsSheetData, SilenceSheetData, SpeechSheetData, AnimationPresetData, PieceTextData,
 }
 
 export component App inherits Window {
@@ -111,7 +114,7 @@ export component App inherits Window {
         }
     }
     property <bool> sheet-open: root.export.open || root.settings.open
-        || root.project-sheet.open || root.captions.open || root.speech.open
+        || root.project-sheet.open || root.piece-name.open || root.captions.open || root.speech.open
         || root.silence.open || root.start.composing;
     changed sheet-open => {
         if (!root.sheet-open) {
@@ -265,6 +268,10 @@ export component App inherits Window {
     /// The project sheet, opened from the Details panel.
     in property <ProjectSheetData> project-sheet;
     callback project-closed();
+    in property <PieceNameData> piece-name;
+    callback piece-name-edited(name: string);
+    callback piece-name-apply();
+    callback piece-name-closed();
     callback project-name-edited(name: string);
     callback project-size-changed(index: int);
     callback project-rate-changed(index: int);
@@ -674,6 +681,18 @@ export component App inherits Window {
         custom-fps-edited(fps) => { root.project-custom-fps-edited(fps); }
         color-space-changed(index) => { root.project-color-space-changed(index); }
         apply => { root.project-apply(); }
+    }
+
+    PieceNameDialog {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        data: root.piece-name;
+
+        closed => { root.piece-name-closed(); }
+        name-edited(name) => { root.piece-name-edited(name); }
+        apply => { root.piece-name-apply(); }
     }
 
     RelinkDialog {

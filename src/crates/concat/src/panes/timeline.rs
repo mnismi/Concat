@@ -33,6 +33,9 @@ const ZOOM_STEP: f32 = 1.4;
 pub struct LaneView {
     pub locked: bool,
     pub size: TrackSize,
+    /// The height dragged off the header's foot, in logical pixels; what
+    /// `TrackSize::Custom` draws.
+    pub height: f32,
 }
 
 impl Default for LaneView {
@@ -40,6 +43,7 @@ impl Default for LaneView {
         Self {
             locked: false,
             size: TrackSize::Auto,
+            height: 0.0,
         }
     }
 }

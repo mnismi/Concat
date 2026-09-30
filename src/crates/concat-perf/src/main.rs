@@ -65,6 +65,25 @@ fn main() {
     let check = std::env::args().any(|arg| arg == "--check");
     let quick = std::env::args().any(|arg| arg == "--quick");
     concat_media::init();
+    // Playback through the monitor, alone and with progress, until it is
+    // known to finish everywhere the table runs.
+    if std::env::args().any(|arg| arg == "--playback") {
+        let media = Media::synthesise();
+        eprintln!("1080p media ready");
+        for m in playback(&media, "1080p") {
+            eprintln!("{}: {:.1} {} ({})", m.name, m.value, m.unit, m.note);
+        }
+        let media = Media::synthesise_as(&Spec {
+            name: "perf-play-4k",
+            frames: 90,
+            ..Spec::PHONE_4K
+        });
+        eprintln!("4K media ready");
+        for m in playback(&media, "4K phone") {
+            eprintln!("{}: {:.1} {} ({})", m.name, m.value, m.unit, m.note);
+        }
+        return;
+    }
     let mut results = vec![
         plan_200_clips(),
         undo_200_edits(),
@@ -838,6 +857,97 @@ fn scrub(media: &Media) -> Vec<Measure> {
             note: format!("{} treated from cached sources", knob.treated),
         },
     ]
+}
+
+/// Playback the way the monitor does it: one frame at a time, each one's
+/// pictures gathered on a worker (`frame_sources`, moving), drawn to a
+/// texture on the device (`texture_of`), and two frames handed to the
+/// scheduler to decode ahead. A 1080p timeline at the monitor's default
+/// half size. The number is what the pipeline sustains; under the
+/// timeline's 30 it drops frames on screen.
+fn playback(media: &Media, label: &'static str) -> Vec<Measure> {
+    use concat_host::preview::{FrameSpec, Monitor, wgpu};
+    use concat_host::{Session, projects};
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: if cfg!(windows) { wgpu::Backends::DX12 } else { wgpu::Backends::VULKAN },
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        ..Default::default()
+    })) else {
+        return Vec::new();
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+            .expect("a device");
+    let monitor = Monitor::with_gpu(device.clone(), queue);
+    let dir = media.path.parent().expect("a dir").join("project-play");
+    std::fs::create_dir_all(&dir).expect("a dir");
+    let info =
+        projects::create(&dir.to_string_lossy(), "play", 1920, 1080, 30, 1).expect("creates");
+    let mut session = Session::open_info(&info).expect("opens");
+    let summary = concat_host::media::probe(&media.path.to_string_lossy()).expect("probes");
+    let media_id = session
+        .apply(Command::AddMedia {
+            item: summary.to_new_media(),
+        })
+        .expect("adds")
+        .created_id
+        .expect("a media id");
+    session
+        .apply(Command::AddClipAtFirstFree {
+            media_id,
+            start: 0.0,
+        })
+        .expect("places");
+    let clips = Arc::new(session.flattened_clips());
+    let settings = session.settings();
+    let frames = media.frames;
+    let (mut sources_ms, mut draw_ms) = (0.0, 0.0);
+    let started = Instant::now();
+    for index in 0..frames {
+        let spec = FrameSpec {
+            time: f64::from(index) / 30.0,
+            width: 960,
+            height: 540,
+            moving: true,
+            color_space: session.video().color_space,
+        };
+        let at = Instant::now();
+        let sources = monitor
+            .frame_sources(Arc::clone(&clips), &settings, spec)
+            .expect("gathers");
+        {
+            let monitor = monitor.clone();
+            let (clips, settings) = (Arc::clone(&clips), settings.clone());
+            std::thread::spawn(move || monitor.prefetch(clips, &settings, spec, 2));
+        }
+        sources_ms += at.elapsed().as_secs_f64() * 1e3;
+        let at = Instant::now();
+        let _texture = monitor.texture_of(&sources, spec).expect("draws");
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        draw_ms += at.elapsed().as_secs_f64() * 1e3;
+        if index % 15 == 0 {
+            eprintln!("  frame {index}: {:.1?} so far", started.elapsed());
+        }
+    }
+    let elapsed = started.elapsed().as_secs_f64();
+    vec![Measure {
+        name: if label == "1080p" {
+            "play 1080p through the monitor, half size"
+        } else {
+            "play 4K phone footage through the monitor"
+        },
+        value: f64::from(frames) / elapsed,
+        unit: "fps",
+        budget: Budget::AtLeast(30.0),
+        note: format!(
+            "{:.1} ms gathering, {:.1} ms drawing a frame",
+            sources_ms / f64::from(frames),
+            draw_ms / f64::from(frames)
+        ),
+    }]
 }
 
 /// The plan the compositors are timed on: a 1080p ground, a placed and

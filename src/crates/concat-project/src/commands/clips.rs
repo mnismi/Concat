@@ -181,6 +181,21 @@ pub(super) fn apply(
             delta,
             ripple,
         } => {
+            // A piece trims only its tail, and only as far as its hold
+            // squeezes or its footage lasts.
+            let range = project
+                .active()
+                .clip(&clip_id)
+                .and_then(|clip| clip.piece.as_ref())
+                .and_then(|placement| project.piece(&placement.piece_id))
+                .map(|piece| piece.length_range(&project.media));
+            let is_piece = project
+                .active()
+                .clip(&clip_id)
+                .is_some_and(|clip| clip.kind == ClipKind::Piece);
+            if is_piece && (edge == TrimEdge::Start || range.is_none()) {
+                return Ok(Outcome::default());
+            }
             let timeline = project.active_mut();
             let Some(clip) = timeline.clip_mut(&clip_id) else {
                 return Ok(Outcome::default());
@@ -193,11 +208,15 @@ pub(super) fn apply(
             // move, `behind` where "later" begins.
             let (applied, by, behind) = match edge {
                 TrimEdge::End => {
-                    let duration = (clip.duration + delta).max(MIN_CLIP_DURATION);
+                    let mut duration = (clip.duration + delta).max(MIN_CLIP_DURATION);
+                    if let Some((shortest, longest)) = range {
+                        duration = duration.clamp(shortest, longest);
+                    }
                     let old = clip.duration;
                     let applied = assign(&mut clip.duration, duration);
                     if applied {
                         clip.rewindow_keys(old, 0.0, duration);
+                        clip.fit_animations();
                     }
                     (applied, duration - old, old_end - JOIN_EPSILON)
                 }
@@ -226,6 +245,7 @@ pub(super) fn apply(
                         | assign(&mut clip.source_start, source_start);
                     if applied {
                         clip.rewindow_keys(old, moved, old);
+                        clip.fit_animations();
                     }
                     if ripple {
                         // The in-point moved; the clip stays put, and the
@@ -255,6 +275,9 @@ pub(super) fn apply(
                 let Some(index) = timeline.clips.iter().position(|clip| clip.id == clip_id) else {
                     continue;
                 };
+                if timeline.clips[index].kind == ClipKind::Piece {
+                    continue;
+                }
                 {
                     // A curve does not survive a cut in halves: the map from
                     // here to the source is not affine, so both halves go to
@@ -287,12 +310,14 @@ pub(super) fn apply(
                 // an entrance or an exit the whole did not have at the cut.
                 tail.transition_in = None;
                 tail.fade_in = 0.0;
+                tail.animation_in = None;
                 tail.rewindow_keys(whole, offset, whole);
                 created = Some(tail.id.clone());
                 let head = timeline.clip_at_mut(index);
                 head.duration = offset;
                 head.source_start = head_source;
                 head.fade_out = 0.0;
+                head.animation_out = None;
                 head.rewindow_keys(whole, 0.0, offset);
                 timeline.clips.insert(index + 1, Arc::new(tail));
             }
@@ -335,6 +360,7 @@ pub(super) fn apply(
                         audio_tracks: item.audio_tracks,
                         origin: item.origin,
                         placeholder: false,
+                        piece_media: false,
                         color_range: None,
                         color_space: item.color_space,
                         extra: Default::default(),
@@ -420,6 +446,7 @@ pub(super) fn apply(
                         audio_tracks: Vec::new(),
                         origin: item.origin,
                         placeholder: false,
+                        piece_media: false,
                         color_range: None,
                         color_space: item.color_space,
                         extra: Default::default(),
@@ -446,11 +473,13 @@ pub(super) fn apply(
             tail.source_start = tail_source;
             tail.transition_in = None;
             tail.fade_in = 0.0;
+            tail.animation_in = None;
             tail.rewindow_keys(clip_duration, offset, clip_duration);
             let head = timeline.clip_at_mut(index);
             head.duration = offset;
             head.source_start = head_source;
             head.fade_out = 0.0;
+            head.animation_out = None;
             head.rewindow_keys(clip_duration, 0.0, offset);
             timeline.clips.insert(index + 1, Arc::new(tail));
 
@@ -483,6 +512,8 @@ pub(super) fn apply(
             frozen.muted = None;
             frozen.detached_from = None;
             frozen.transition_in = None;
+            frozen.animation_in = None;
+            frozen.animation_out = None;
             frozen.text = None;
             timeline.clips.push(Arc::new(frozen));
 
@@ -522,6 +553,7 @@ pub(super) fn apply(
                 survivor.absorb_keys(piece, piece.start - first.start);
             }
             survivor.fade_out = last.fade_out;
+            survivor.animation_out = last.animation_out.clone();
             // A validated merge always absorbs at least one piece.
             Ok(Outcome {
                 created_id: Some(first.id),
@@ -656,7 +688,7 @@ fn ripple_room_for(timeline: &mut Timeline, track_id: &str, start: f64, media: &
 
 /// The lowest track with nothing occupying `[start, start + duration)`,
 /// falling back to the bottom track.
-fn first_free_track(timeline: &Timeline, start: f64, duration: f64) -> Option<String> {
+pub(super) fn first_free_track(timeline: &Timeline, start: f64, duration: f64) -> Option<String> {
     let end = start + duration;
     timeline
         .tracks

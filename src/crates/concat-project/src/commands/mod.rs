@@ -13,9 +13,10 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    AppliedFilter, AudioTrack, Clip, ClipKind, ColorRange, ColorSpace, Crop, CustomFont, Cutout,
-    CutoutMode, KeyEase, KeyProperty, MediaItem, MediaKind, MediaOrigin, Project, SpeedPoint,
-    Stroke, TextStyle, Timeline, Track, Transition, VideoSettings,
+    AppliedFilter, AudioTrack, Clip, ClipAnimation, ClipKind, ColorRange, ColorSpace, Crop,
+    CustomFont, Cutout, CutoutMode, KeyEase, KeyProperty, MIN_ANIMATION, MediaItem, MediaKind,
+    MediaOrigin, Piece, Project, SpeedPoint, Stroke, TextStyle, Timeline, Track, Transition,
+    VideoSettings,
 };
 
 mod audio;
@@ -25,6 +26,7 @@ mod cut;
 pub use clips::why_not_merge;
 pub use cut::cut_group;
 mod media;
+mod pieces;
 mod properties;
 mod timelines;
 mod tracks;
@@ -218,6 +220,16 @@ pub struct NewMedia {
     /// to SDR.
     #[serde(default)]
     pub color_space: ColorSpace,
+}
+
+/// Which end of a clip an animation plays at.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AnimationSlot {
+    /// Over the clip's first seconds, into its resting state.
+    In,
+    /// Over its last seconds, out of it.
+    Out,
 }
 
 /// Every edit, as the window sends it: a tagged `op` plus camelCase
@@ -559,6 +571,69 @@ pub enum Command {
         /// The spans to take out, in source seconds.
         ranges: Vec<(f64, f64)>,
     },
+    /// Sets the animation at one end of a clip, or takes it away. The
+    /// length is held to [`MIN_ANIMATION`] and the clip's length; when the
+    /// two ends together would outlast the clip, the other end is shortened
+    /// to fit, and dropped when less than [`MIN_ANIMATION`] would be left -
+    /// the end being set keeps what was asked. Refused for a clip that is
+    /// not there and for a kind with no picture to move.
+    SetClipAnimation {
+        /// The clip to animate.
+        clip_id: String,
+        /// Which end.
+        slot: AnimationSlot,
+        /// The preset and its length; None removes it.
+        animation: Option<ClipAnimation>,
+    },
+    /// Adds a piece, and the bin items and fonts it uses, to the project if
+    /// they are not there yet, then places one clip of it at `start`: on
+    /// `track_id`, or the lowest lane free for its length when None. Bin
+    /// items and fonts are matched by path, a new item is minted an "m" id
+    /// and hidden from the bin, and the piece's clips are pointed at the
+    /// project's ids. The piece is then matched by content, so the same
+    /// piece dropped twice is stored once; a new one is minted a "p" id.
+    InsertPiece {
+        /// The piece; its id is ignored.
+        piece: Piece,
+        /// The bin items its clips name, by their ids inside `piece`.
+        #[serde(default)]
+        media: Vec<MediaItem>,
+        /// Fonts its titles use.
+        #[serde(default)]
+        fonts: Vec<CustomFont>,
+        /// The lane; None for the first free one.
+        #[serde(default)]
+        track_id: Option<String>,
+        /// Timeline position in seconds, floored at 0.
+        start: f64,
+    },
+    /// Places one more clip of a piece the project already holds, at its
+    /// saved length. What duplicate and paste use.
+    PlacePiece {
+        /// The piece to place.
+        piece_id: String,
+        /// The lane; None for the first free one.
+        #[serde(default)]
+        track_id: Option<String>,
+        /// Timeline position in seconds, floored at 0.
+        start: f64,
+    },
+    /// Gives one title inside a placed piece new words, or its saved words
+    /// back (None).
+    SetPieceText {
+        /// The piece clip.
+        clip_id: String,
+        /// The title's id inside the piece.
+        inner_clip_id: String,
+        /// The words; None restores the saved ones.
+        text: Option<String>,
+    },
+    /// Replaces a piece clip with the clips it plays, as ordinary clips on
+    /// new lanes above its own - what to do to edit its inside.
+    UnpackPiece {
+        /// The piece clip.
+        clip_id: String,
+    },
     /// Applies a [`ClipPatch`]: only the fields present change, with the
     /// clamps documented on the patch. An unknown clip is a no-op.
     UpdateClip {
@@ -763,7 +838,7 @@ pub enum CommandError {
     /// one stored would poison every duration and key that touched it.
     #[error("A number in that edit is not finite.")]
     NotANumber,
-    /// [`Command::RemoveClipRanges`] named a clip that is not there.
+    /// A clip command named a clip that is not there.
     #[error("That clip no longer exists.")]
     ClipGone,
     /// [`Command::RemoveClipRanges`] on a clip whose speed changes over
@@ -773,6 +848,17 @@ pub enum CommandError {
     /// [`Command::RemoveClipRanges`] would have taken out the whole clip.
     #[error("That would remove the whole clip.")]
     NothingLeft,
+    /// [`Command::SetClipAnimation`] on a sound or a layer.
+    #[error("Only a video, a still or a title can be animated.")]
+    CannotAnimate,
+    /// A piece command named a piece the project does not hold.
+    #[error("That piece is no longer in the project.")]
+    PieceGone,
+    /// An edit that would change the inside of a placed piece.
+    #[error(
+        "A piece can only be moved, turned, resized, stretched or retitled. Unpack it to change the rest."
+    )]
+    PieceIsSealed,
 }
 
 /// Mints ids. Owned by the editor so restored projects advance it past every
@@ -811,6 +897,9 @@ impl IdMint {
     pub fn adopt_project(&mut self, project: &Project) {
         for item in &project.media {
             self.adopt(&item.id);
+        }
+        for piece in &project.pieces {
+            self.adopt(&piece.id);
         }
         for timeline in &project.timelines {
             self.adopt(&timeline.id);
@@ -943,6 +1032,9 @@ impl Command {
             Command::RemoveClipRanges { ranges, .. } => {
                 bad(ranges.iter().flat_map(|(from, to)| [*from, *to]))
             }
+            Command::SetClipAnimation { animation, .. } => {
+                bad(animation.iter().map(|animation| animation.duration))
+            }
             Command::FreezeFrame { time, duration, .. } => bad([*time]) || bad(*duration),
             Command::ReplaceClipMedia {
                 item, source_start, ..
@@ -990,6 +1082,8 @@ impl Command {
                 .into_iter()
                 .flatten()
                 .copied()),
+            Command::InsertPiece { start, piece, .. } => bad([*start, piece.duration]),
+            Command::PlacePiece { start, .. } => bad([*start]),
             _ => false,
         }
     }
@@ -1008,6 +1102,48 @@ fn assign<T: PartialEq>(slot: &mut T, value: T) -> bool {
     }
 }
 
+impl ClipPatch {
+    /// True when the patch only renames - the one patch a sealed piece
+    /// takes.
+    pub fn is_rename_only(&self) -> bool {
+        ClipPatch {
+            name: None,
+            ..self.clone()
+        } == ClipPatch::default()
+    }
+}
+
+/// Whether `command` would change the inside of a placed piece on the
+/// active timeline - the edits a piece refuses. See the spec's list.
+fn opens_a_piece(project: &Project, command: &Command) -> bool {
+    let piece = |id: &str| {
+        project
+            .active()
+            .clip(id)
+            .is_some_and(|clip| clip.kind == ClipKind::Piece)
+    };
+    match command {
+        Command::UpdateClip { clip_id, patch } => piece(clip_id) && !patch.is_rename_only(),
+        Command::SetClipAnimation { clip_id, .. }
+        | Command::SetClipSpeed { clip_id, .. }
+        | Command::SetClipSpeedCurve { clip_id, .. }
+        | Command::SetClipCutout { clip_id, .. }
+        | Command::AddCutoutStroke { clip_id, .. }
+        | Command::SetClipKey { clip_id, .. }
+        | Command::ClearClipKey { clip_id, .. }
+        | Command::ClearClipKeys { clip_id, .. }
+        | Command::SetEffectKey { clip_id, .. }
+        | Command::ClearEffectKey { clip_id, .. }
+        | Command::ClearEffectKeys { clip_id, .. }
+        | Command::ReplaceClipMedia { clip_id, .. }
+        | Command::FreezeFrame { clip_id, .. }
+        | Command::RemoveClipRanges { clip_id, .. }
+        | Command::DetachAudio { clip_id } => piece(clip_id),
+        Command::MergeClips { clip_ids } => clip_ids.iter().any(|id| piece(id)),
+        _ => false,
+    }
+}
+
 /// Applies one command. Errors are [`CommandError`]s, each rendering as a
 /// user-meaningful sentence; a command that legitimately does nothing (a
 /// no-op rename, an out-of-range split) returns Ok with no created id and
@@ -1019,6 +1155,9 @@ pub fn apply(
 ) -> Result<Outcome, CommandError> {
     if command.has_non_finite() {
         return Err(CommandError::NotANumber);
+    }
+    if opens_a_piece(project, &command) {
+        return Err(CommandError::PieceIsSealed);
     }
     match command {
         Command::Batch { commands } => {
@@ -1063,6 +1202,7 @@ pub fn apply(
         | Command::RemoveClips { .. }) => clips::apply(project, mint, command),
         command @ Command::RemoveClipRanges { .. } => cut::apply(project, mint, command),
         command @ (Command::UpdateClip { .. }
+        | Command::SetClipAnimation { .. }
         | Command::SetClipSpeed { .. }
         | Command::SetClipCutout { .. }
         | Command::AddCutoutStroke { .. }
@@ -1074,6 +1214,10 @@ pub fn apply(
         | Command::ClearEffectKeys { .. }
         | Command::SetClipSpeedCurve { .. }
         | Command::SetClipTransform { .. }) => properties::apply(project, mint, command),
+        command @ (Command::InsertPiece { .. }
+        | Command::PlacePiece { .. }
+        | Command::SetPieceText { .. }
+        | Command::UnpackPiece { .. }) => pieces::apply(project, mint, command),
         command @ (Command::DetachAudio { .. } | Command::ReattachAudio { .. }) => {
             audio::apply(project, mint, command)
         }

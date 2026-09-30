@@ -12,6 +12,8 @@ import { MediaFilter, MediaItemData, TextPresetData } from "workspace/media-pane
 import { DockDivider, DockSide, SeatBox } from "dock.slint";
 import { PaneKind } from "workspace/pane-switcher.slint";
 import { MenuItemData } from "primitives/context-menu.slint";
+import { AnimationPresetData } from "inspector/animations-panel.slint";
+import { PieceTextData } from "inspector/piece-panel.slint";
 import {
     ClipData, ClipField, ClipTextField, DropData, SelectedClipData, SilenceShadeData,
     StageGuideData, StageItemData, TimelineTabData, TimelineTool, TrackData,
@@ -120,6 +122,16 @@ export global Editor {
     in-out property <string> library-audition;
     callback library-apply-audio(effect-id: string);
     callback library-save-template();
+    /// The piece library, as the Templates page's Pieces shelf shows it:
+    /// each card's id is its bundle folder.
+    in-out property <[CatalogueEntryData]> pieces;
+    callback library-save-piece();
+    callback library-place-piece(path: string);
+    callback library-piece-menu(path: string);
+    /// The selected piece's titles, for the inspector's Piece tab, and one
+    /// of them given new words.
+    in-out property <[PieceTextData]> piece-texts;
+    callback piece-text-set(inner: string, text: string);
     /// Filters page: import `.cube` tables as looks of the user's own.
     callback library-import-lut();
     /// Effects and Filters pages: read the user's effects folder again, so
@@ -153,6 +165,11 @@ export global Editor {
     in-out property <[CatalogueEntryData]> catalogue-filters;
     in-out property <[CatalogueEntryData]> catalogue-audio;
     in-out property <[CatalogueEntryData]> catalogue-transitions;
+    /// The Animations tab's presets, one list per end.
+    in-out property <[AnimationPresetData]> animation-presets-in;
+    in-out property <[AnimationPresetData]> animation-presets-out;
+    in-out property <[AnimationPresetData]> animation-effects-in;
+    in-out property <[AnimationPresetData]> animation-effects-out;
     in-out property <[string]> effect-groups;
     in-out property <[string]> filter-groups;
     in-out property <[string]> audio-groups;
@@ -271,6 +288,9 @@ export global Editor {
     /// The transition riding into the selected clip; see VideoPanel.
     callback transition-remove();
     callback transition-duration-set(seconds: float);
+    callback animation-pick(out: bool, id: string);
+    callback animation-length-set(out: bool, seconds: float);
+    callback animation-replay(out: bool);
 
     // ── the timeline ──
     in-out property <[TimelineTabData]> timeline-tabs;
@@ -385,6 +405,8 @@ export global Editor {
     callback dropped(payload: string, seconds: float, y: length);
     callback track-flag-changed(index: int, visible: bool, muted: bool, locked: bool);
     callback track-sized(index: int, size: TrackSize);
+    /// A lane's foot dragged to `height` logical pixels.
+    callback track-resized(index: int, height: float);
     callback track-removed(index: int);
     /// A tab dragged to a new place in the strip. `to` is counted with the
     /// tab already out of its old slot, the way MoveTimeline counts.

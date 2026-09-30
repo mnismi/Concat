@@ -160,6 +160,7 @@ const WRITER_OWNED: &[&str] = &[
     "clips",
     "media",
     "fonts",
+    "pieces",
     "timelines",
     "activeTimelineId",
 ];
@@ -190,6 +191,12 @@ fn settle(mut project: Project) -> Option<Project> {
     project
         .fonts
         .retain(|font| !font.family.is_empty() && !font.path.is_empty());
+    project.pieces = project
+        .pieces
+        .into_iter()
+        .filter(|piece| !piece.id.is_empty())
+        .map(|piece| settle_piece(piece, &media))
+        .collect();
 
     let mut seen: HashSet<String> = HashSet::new();
     project.timelines = project
@@ -262,7 +269,7 @@ fn settle_clip(
         return None;
     }
     match clip.kind {
-        ClipKind::Text | ClipKind::Layer => clip.media_id.clear(),
+        ClipKind::Text | ClipKind::Layer | ClipKind::Piece => clip.media_id.clear(),
         ClipKind::Video | ClipKind::Audio | ClipKind::Image => {
             if !media.iter().any(|item| item.id == clip.media_id) {
                 return None;
@@ -272,7 +279,42 @@ fn settle_clip(
     if clip.kind != ClipKind::Text {
         clip.text = None;
     }
+    if clip.kind != ClipKind::Piece {
+        clip.piece = None;
+    }
     Some(clip.tidy())
+}
+
+/// One piece settled: its inner clips as a timeline's would be - media
+/// in the bin, numbers in range - with no lane of their own and never a
+/// piece inside a piece.
+fn settle_piece(mut piece: crate::model::Piece, media: &[MediaItem]) -> crate::model::Piece {
+    use crate::model::ClipKind;
+    piece.design_width = piece.design_width.max(1);
+    piece.design_height = piece.design_height.max(1);
+    piece.duration = if piece.duration.is_finite() {
+        piece.duration.max(crate::model::ranges::MIN_CLIP_DURATION)
+    } else {
+        1.0
+    };
+    for lane in &mut piece.lanes {
+        lane.clips = std::mem::take(&mut lane.clips)
+            .into_iter()
+            .filter(|clip| !clip.id.is_empty() && clip.kind != ClipKind::Piece)
+            .filter(|clip| match clip.kind {
+                ClipKind::Video | ClipKind::Audio | ClipKind::Image => {
+                    media.iter().any(|item| item.id == clip.media_id)
+                }
+                _ => true,
+            })
+            .map(|mut clip| {
+                clip.track_id.clear();
+                clip.piece = None;
+                clip.tidy()
+            })
+            .collect();
+    }
+    piece
 }
 
 /// Settings the host manages around the edit: the manifest's identity fields.
@@ -312,6 +354,8 @@ impl DocumentSettings {
 
 /// Builds the full `concat.json` document.
 pub fn to_document(settings: &DocumentSettings, project: &Project) -> Value {
+    // Pieces no clip places, and the media only they used, are not written.
+    let project = &crate::pieces::in_use(project);
     let active = project.active();
     let mut document = Map::new();
     document.insert("concat".into(), json!("0.1.0"));
@@ -347,6 +391,12 @@ pub fn to_document(settings: &DocumentSettings, project: &Project) -> Value {
         "fonts".into(),
         serde_json::to_value(&project.fonts).expect("serialises"),
     );
+    if !project.pieces.is_empty() {
+        document.insert(
+            "pieces".into(),
+            serde_json::to_value(&project.pieces).expect("serialises"),
+        );
+    }
     document.insert(
         "timelines".into(),
         serde_json::to_value(&project.timelines).expect("serialises"),

@@ -25,6 +25,7 @@ pub mod commands;
 pub mod doc;
 pub mod editor;
 pub mod model;
+pub mod pieces;
 pub mod speed;
 
 pub use commands::{Command, CommandError, Outcome, why_not_merge};
@@ -36,13 +37,15 @@ pub use model::Project;
 mod tests {
     use serde_json::json;
 
+    use crate::commands::AnimationSlot;
     use crate::commands::{
         ClipMove, ClipPatch, Command, CommandError, NewMedia, TrackFlag, TrimEdge,
     };
     use crate::doc::DocumentSettings;
     use crate::editor::Editor;
     use crate::model::{
-        AudioTrack, ClipKind, MediaItem, MediaKind, MediaOrigin, Project, TextStyle,
+        AudioTrack, Clip, ClipAnimation, ClipKind, MediaItem, MediaKind, MediaOrigin, Project,
+        TextStyle,
     };
 
     fn media(path: &str, duration: f64, has_audio: bool) -> Command {
@@ -4461,6 +4464,7 @@ mod tests {
             has_audio: false,
             audio_tracks: vec![],
             placeholder: false,
+            piece_media: false,
             color_range: None,
             color_space: Default::default(),
             origin: None,
@@ -4500,6 +4504,7 @@ mod tests {
             has_audio: false,
             audio_tracks: vec![],
             placeholder: false,
+            piece_media: false,
             color_range: None,
             color_space: Default::default(),
             origin: None,
@@ -4508,5 +4513,274 @@ mod tests {
 
         let missing = project.missing_media();
         assert_eq!(missing.len(), 0);
+    }
+
+    fn animation(id: &str, duration: f64) -> ClipAnimation {
+        ClipAnimation {
+            id: id.to_owned(),
+            duration,
+        }
+    }
+
+    fn animate(editor: &mut Editor, clip: &str, slot: AnimationSlot, id: &str, duration: f64) {
+        editor
+            .apply(Command::SetClipAnimation {
+                clip_id: clip.to_owned(),
+                slot,
+                animation: Some(animation(id, duration)),
+            })
+            .expect("animates");
+    }
+
+    fn clip_of(editor: &Editor, id: &str) -> Clip {
+        editor.project().active().clip(id).expect("there").clone()
+    }
+
+    #[test]
+    fn an_animation_is_set_replaced_and_removed() {
+        let (mut editor, _, clip) = fixture();
+        animate(&mut editor, &clip, AnimationSlot::In, "zoom-in", 1.0);
+        assert_eq!(
+            clip_of(&editor, &clip).animation_in,
+            Some(animation("zoom-in", 1.0))
+        );
+        animate(&mut editor, &clip, AnimationSlot::In, "fade-in", 0.5);
+        assert_eq!(
+            clip_of(&editor, &clip).animation_in,
+            Some(animation("fade-in", 0.5))
+        );
+        assert_eq!(clip_of(&editor, &clip).animation_out, None);
+        editor
+            .apply(Command::SetClipAnimation {
+                clip_id: clip.clone(),
+                slot: AnimationSlot::In,
+                animation: None,
+            })
+            .expect("removes");
+        assert_eq!(clip_of(&editor, &clip).animation_in, None);
+    }
+
+    #[test]
+    fn an_animation_is_held_to_the_clip() {
+        let (mut editor, _, clip) = fixture();
+        animate(&mut editor, &clip, AnimationSlot::Out, "fade-out", 25.0);
+        assert_eq!(
+            clip_of(&editor, &clip).animation_out,
+            Some(animation("fade-out", 10.0))
+        );
+        animate(&mut editor, &clip, AnimationSlot::Out, "fade-out", 0.01);
+        assert_eq!(
+            clip_of(&editor, &clip).animation_out,
+            Some(animation("fade-out", 0.1))
+        );
+    }
+
+    #[test]
+    fn the_other_end_gives_way() {
+        let (mut editor, _, clip) = fixture();
+        animate(&mut editor, &clip, AnimationSlot::In, "zoom-in", 6.0);
+        animate(&mut editor, &clip, AnimationSlot::Out, "zoom-out", 6.0);
+        let placed = clip_of(&editor, &clip);
+        assert_eq!(placed.animation_out, Some(animation("zoom-out", 6.0)));
+        assert_eq!(placed.animation_in, Some(animation("zoom-in", 4.0)));
+        // An end that takes the whole clip leaves no room: the other goes.
+        animate(&mut editor, &clip, AnimationSlot::In, "zoom-in", 10.0);
+        assert_eq!(clip_of(&editor, &clip).animation_out, None);
+    }
+
+    #[test]
+    fn a_sound_or_a_layer_cannot_animate() {
+        let mut editor = Editor::new();
+        let Command::AddMedia { mut item } = media("/a.wav", 5.0, true) else {
+            unreachable!()
+        };
+        item.kind = MediaKind::Audio;
+        let media_id = editor
+            .apply(Command::AddMedia { item })
+            .expect("adds")
+            .created_id
+            .expect("id");
+        let track_id = editor.project().active().tracks[0].id.clone();
+        let sound = editor
+            .apply(Command::AddClip {
+                media_id,
+                track_id,
+                start: 0.0,
+                ripple: false,
+            })
+            .expect("adds")
+            .created_id
+            .expect("id");
+        let layer = editor
+            .apply(Command::AddLayerClip {
+                track_id: None,
+                start: 20.0,
+                duration: Some(2.0),
+                effect_id: "concat.warm".to_owned(),
+                name: "Warm".to_owned(),
+            })
+            .expect("adds")
+            .created_id
+            .expect("id");
+        for clip in [sound, layer] {
+            assert_eq!(
+                editor.apply(Command::SetClipAnimation {
+                    clip_id: clip,
+                    slot: AnimationSlot::In,
+                    animation: Some(animation("fade-in", 1.0)),
+                }),
+                Err(CommandError::CannotAnimate)
+            );
+        }
+        assert_eq!(
+            editor.apply(Command::SetClipAnimation {
+                clip_id: "nowhere".to_owned(),
+                slot: AnimationSlot::In,
+                animation: None,
+            }),
+            Err(CommandError::ClipGone)
+        );
+    }
+
+    #[test]
+    fn a_title_can_animate() {
+        let mut editor = Editor::new();
+        let title = editor
+            .apply(Command::AddTextClip {
+                above: false,
+                track_id: None,
+                start: 0.0,
+                style: None,
+                duration: Some(3.0),
+                offset_y: None,
+            })
+            .expect("adds")
+            .created_id
+            .expect("id");
+        animate(&mut editor, &title, AnimationSlot::In, "pop", 0.5);
+        assert_eq!(
+            clip_of(&editor, &title).animation_in,
+            Some(animation("pop", 0.5))
+        );
+    }
+
+    #[test]
+    fn a_split_keeps_in_on_the_head_and_out_on_the_tail() {
+        let (mut editor, _, clip) = fixture();
+        animate(&mut editor, &clip, AnimationSlot::In, "zoom-in", 1.0);
+        animate(&mut editor, &clip, AnimationSlot::Out, "zoom-out", 1.0);
+        editor
+            .apply(Command::SplitClips {
+                clip_ids: vec![clip.clone()],
+                time: 5.0,
+            })
+            .expect("splits");
+        let mut clips = editor.project().active().clips.to_vec();
+        clips.sort_by(|a, b| a.start.total_cmp(&b.start));
+        assert_eq!(clips[0].animation_in, Some(animation("zoom-in", 1.0)));
+        assert_eq!(clips[0].animation_out, None);
+        assert_eq!(clips[1].animation_in, None);
+        assert_eq!(clips[1].animation_out, Some(animation("zoom-out", 1.0)));
+    }
+
+    #[test]
+    fn a_merge_keeps_the_first_in_and_the_last_out() {
+        let (mut editor, _, clip) = fixture();
+        animate(&mut editor, &clip, AnimationSlot::In, "zoom-in", 1.0);
+        animate(&mut editor, &clip, AnimationSlot::Out, "zoom-out", 1.0);
+        let tail = editor
+            .apply(Command::SplitClips {
+                clip_ids: vec![clip.clone()],
+                time: 5.0,
+            })
+            .expect("splits")
+            .created_id
+            .expect("the tail");
+        editor
+            .apply(Command::MergeClips {
+                clip_ids: vec![clip.clone(), tail],
+            })
+            .expect("merges");
+        let merged = clip_of(&editor, &clip);
+        assert_eq!(merged.animation_in, Some(animation("zoom-in", 1.0)));
+        assert_eq!(merged.animation_out, Some(animation("zoom-out", 1.0)));
+    }
+
+    #[test]
+    fn removing_silences_keeps_the_ends_animated() {
+        let (mut editor, _, clip) = fixture();
+        animate(&mut editor, &clip, AnimationSlot::In, "zoom-in", 0.5);
+        animate(&mut editor, &clip, AnimationSlot::Out, "zoom-out", 0.5);
+        editor
+            .apply(Command::RemoveClipRanges {
+                clip_id: clip,
+                ranges: vec![(0.0, 1.0), (4.0, 5.0), (9.0, 10.0)],
+            })
+            .expect("cuts");
+        let mut clips = editor.project().active().clips.to_vec();
+        clips.sort_by(|a, b| a.start.total_cmp(&b.start));
+        assert_eq!(clips.len(), 2);
+        assert_eq!(clips[0].animation_in, Some(animation("zoom-in", 0.5)));
+        assert_eq!(clips[0].animation_out, None);
+        assert_eq!(clips[1].animation_in, None);
+        assert_eq!(clips[1].animation_out, Some(animation("zoom-out", 0.5)));
+    }
+
+    #[test]
+    fn a_trim_shrinks_both_ends_to_fit() {
+        let (mut editor, _, clip) = fixture();
+        animate(&mut editor, &clip, AnimationSlot::In, "zoom-in", 4.0);
+        animate(&mut editor, &clip, AnimationSlot::Out, "zoom-out", 4.0);
+        editor
+            .apply(Command::TrimClip {
+                clip_id: clip.clone(),
+                edge: TrimEdge::End,
+                delta: -8.0,
+                ripple: false,
+            })
+            .expect("trims");
+        let trimmed = clip_of(&editor, &clip);
+        assert!((trimmed.duration - 2.0).abs() < 1e-9);
+        let (a, b) = (
+            trimmed.animation_in.expect("kept").duration,
+            trimmed.animation_out.expect("kept").duration,
+        );
+        assert!((a - 1.0).abs() < 1e-9 && (b - 1.0).abs() < 1e-9, "{a} {b}");
+    }
+
+    #[test]
+    fn one_undo_takes_an_animation_away() {
+        let (mut editor, _, clip) = fixture();
+        let before = editor.project().clone();
+        animate(&mut editor, &clip, AnimationSlot::In, "zoom-in", 1.0);
+        assert!(editor.undo());
+        assert_eq!(*editor.project(), before);
+    }
+
+    #[test]
+    fn a_project_without_animations_writes_no_animation_fields() {
+        let (editor, _, _) = fixture();
+        let document = crate::to_document(&settings(), editor.project()).to_string();
+        assert!(!document.contains("animationIn"), "{document}");
+        assert!(!document.contains("animationOut"), "{document}");
+    }
+
+    #[test]
+    fn an_unknown_preset_round_trips() {
+        let (mut editor, _, clip) = fixture();
+        animate(
+            &mut editor,
+            &clip,
+            AnimationSlot::Out,
+            "from-a-newer-build",
+            0.7,
+        );
+        let document = crate::to_document(&settings(), editor.project());
+        assert!(document.to_string().contains("\"animationOut\""));
+        let loaded = Editor::from_document(&document).expect("loads");
+        assert_eq!(
+            clip_of(&loaded, &clip).animation_out,
+            Some(animation("from-a-newer-build", 0.7))
+        );
     }
 }

@@ -40,6 +40,7 @@ pub(super) fn apply(
                 audio_tracks: item.audio_tracks,
                 origin: item.origin,
                 placeholder: false,
+                piece_media: false,
                 color_range: None,
                 color_space: item.color_space,
                 extra: Default::default(),

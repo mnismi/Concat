@@ -38,9 +38,10 @@ use concat_host::{
     templates,
 };
 use concat_media::{Pyramid, jpeg};
-use concat_project::commands::{ClipMove, ClipPatch, TrackFlag, TrimEdge};
+use concat_project::commands::{AnimationSlot, ClipMove, ClipPatch, TrackFlag, TrimEdge};
 use concat_project::model::{
-    self, AppliedFilter, Clip, Project, TextAlign, TextStyle, Timeline, Track, Transition,
+    self, AppliedFilter, Clip, ClipAnimation, Project, TextAlign, TextStyle, Timeline, Track,
+    Transition,
 };
 use concat_project::{Command, why_not_merge};
 use slint::{Model, ModelRc, SharedString, VecModel};
@@ -89,6 +90,9 @@ pub const MIN_DURATION: f32 = 1.0 / 60.0;
 const LANE_LARGE: f32 = 108.0;
 const LANE_MEDIUM: f32 = 80.0;
 const LANE_SMALL: f32 = 44.0;
+/// The tallest a lane can be dragged: room for a waveform worth reading
+/// without one lane taking the whole stack.
+const LANE_TALLEST: f32 = 320.0;
 
 /// How long a title runs when it is placed: long enough to read, short
 /// enough that trimming it is a nudge rather than a fight.
@@ -125,6 +129,71 @@ impl Strip {
             frames: frames as i32,
             frame_width: (frame.width() / frames.max(1)) as i32,
             height: frame.height() as i32,
+        }
+    }
+}
+
+/// The mark a motion preset's card wears: the direction or the kind of
+/// its movement.
+fn animation_glyph(id: &str) -> Glyph {
+    match id {
+        "fade-in" | "fade-out" => Glyph::Eye,
+        "zoom-in" | "zoom-out" => Glyph::Maximize,
+        "zoom-from-big" | "zoom-to-big" => Glyph::Fit,
+        "slide-from-left" | "slide-to-right" => Glyph::ChevronRight,
+        "slide-from-right" | "slide-to-left" => Glyph::ChevronLeft,
+        "slide-from-top" | "slide-to-bottom" => Glyph::ChevronDown,
+        "slide-from-bottom" | "slide-to-top" | "rise" => Glyph::ChevronUp,
+        "sink" => Glyph::ChevronDown,
+        "spin-in" | "spin-out" => Glyph::Rotate,
+        "pop" | "pop-out" => Glyph::Sparkle,
+        "shake-in" | "shake-out" => Glyph::Waveform,
+        _ => Glyph::Sparkle,
+    }
+}
+
+/// Publishes both shelves of each end - Basic and Effects, one model each
+/// so a grid only ever lays out its own cards - named in the current
+/// language, an effect preset wearing its effect's still from the shelf.
+fn fill_animation_presets(models: &Models) {
+    use crate::panes::animations;
+    use concat_core::motion::Group;
+    let art_of = |effect: &str| {
+        models
+            .catalogue_effects
+            .iter()
+            .find(|entry| entry.id == effect)
+            .map(|entry| entry.art)
+            .unwrap_or_default()
+    };
+    for (slot, basic, effects) in [
+        (
+            AnimationSlot::In,
+            &models.animation_presets_in,
+            &models.animation_effects_in,
+        ),
+        (
+            AnimationSlot::Out,
+            &models.animation_presets_out,
+            &models.animation_effects_out,
+        ),
+    ] {
+        for (group, model) in [(Group::Basic, basic), (Group::Effects, effects)] {
+            let rows: Vec<AnimationPresetData> = animations::offered(slot)
+                .into_iter()
+                .filter(|preset| preset.group == group)
+                .map(|preset| AnimationPresetData {
+                    id: preset.id.into(),
+                    name: crate::i18n::t(preset.label).into(),
+                    effects: preset.group == Group::Effects,
+                    glyph: animation_glyph(preset.id),
+                    art: preset
+                        .effect
+                        .map(|ramp| art_of(ramp.effect))
+                        .unwrap_or_default(),
+                })
+                .collect();
+            model.set_vec(rows);
         }
     }
 }
@@ -553,6 +622,15 @@ pub struct DropPlan {
 /// rebuilt: a new model is a *reset*, and Slint answers a reset by dropping
 /// every instance behind it - mid-gesture, that includes the TouchArea
 /// holding the pointer.
+/// What the piece name sheet is for.
+#[derive(Clone, Debug)]
+pub enum PieceNaming {
+    /// Saving these clips as a new piece.
+    Save(Vec<String>),
+    /// Renaming the piece at this bundle path.
+    Rename(String),
+}
+
 pub struct Models {
     pub tabs: Rc<VecModel<TimelineTabData>>,
     pub tracks: Rc<VecModel<TrackData>>,
@@ -570,8 +648,19 @@ pub struct Models {
     /// The catalogue's shelves, one list per kind, and the shelf labels.
     pub catalogue_effects: Rc<VecModel<CatalogueEntryData>>,
     pub catalogue_filters: Rc<VecModel<CatalogueEntryData>>,
+    /// The Templates page's Pieces shelf.
+    pub pieces: Rc<VecModel<CatalogueEntryData>>,
+    /// The inspector's Piece tab: the selected piece's titles.
+    pub piece_texts: Rc<VecModel<PieceTextData>>,
     pub catalogue_audio: Rc<VecModel<CatalogueEntryData>>,
     pub catalogue_transitions: Rc<VecModel<CatalogueEntryData>>,
+    /// The Animations tab's two grids, one per end, in the interface's
+    /// language; see `fill_animation_presets`.
+    pub animation_presets_in: Rc<VecModel<AnimationPresetData>>,
+    pub animation_presets_out: Rc<VecModel<AnimationPresetData>>,
+    /// The same two ends' Effects shelves.
+    pub animation_effects_in: Rc<VecModel<AnimationPresetData>>,
+    pub animation_effects_out: Rc<VecModel<AnimationPresetData>>,
     pub effect_groups: Rc<VecModel<SharedString>>,
     pub filter_groups: Rc<VecModel<SharedString>>,
     pub audio_groups: Rc<VecModel<SharedString>>,
@@ -650,8 +739,14 @@ impl Models {
             audio_effects: Rc::new(VecModel::default()),
             catalogue_effects: Rc::new(VecModel::default()),
             catalogue_filters: Rc::new(VecModel::default()),
+            pieces: Rc::new(VecModel::default()),
+            piece_texts: Rc::new(VecModel::default()),
             catalogue_audio: Rc::new(VecModel::default()),
             catalogue_transitions: Rc::new(VecModel::default()),
+            animation_presets_in: Rc::new(VecModel::default()),
+            animation_presets_out: Rc::new(VecModel::default()),
+            animation_effects_in: Rc::new(VecModel::default()),
+            animation_effects_out: Rc::new(VecModel::default()),
             effect_groups: Rc::new(VecModel::default()),
             filter_groups: Rc::new(VecModel::default()),
             audio_groups: Rc::new(VecModel::default()),
@@ -771,6 +866,9 @@ pub struct Studio {
     pub selection: Vec<String>,
     pub playhead: f32,
     pub playing: bool,
+    /// Where playback stops by itself, when a preview asked for a stretch
+    /// rather than the rest of the timeline.
+    stop_at: Option<f32>,
     transport: slint::Timer,
     /// The preview axis: the instant under the pointer while it crosses the
     /// lanes, which the monitor shows instead of the playhead's. None when
@@ -793,7 +891,16 @@ pub struct Studio {
     /// The media the bin's menu was opened on, when it was the bin's menu
     /// and not a clip's: the two share one set of rows and one token.
     pub menu_media: Option<String>,
+    /// The piece card the menu was opened on, by bundle path, when it was a
+    /// piece card's menu; the third of the three targets.
+    pub piece_menu: Option<String>,
     pub menu_token: i32,
+    /// The piece library, as last listed, and each card's poster.
+    pub pieces: Vec<concat_host::pieces::PieceInfo>,
+    pub piece_art: HashMap<String, slint::Image>,
+    /// The piece name sheet, when it is up: what it is naming for, and the
+    /// name as it stands.
+    pub piece_name: Option<(PieceNaming, String)>,
     pub toast: ToastState,
 
     // ── the launch screen ──
@@ -943,6 +1050,17 @@ pub struct Studio {
 
 // ── conversions between the document and the window ─────────────────────
 
+/// A piece's box on the stage, as fractions of the output: its design frame
+/// contain-fitted into `frame`, at `scale`. What the expansion does to it,
+/// restated for the outline.
+fn piece_footprint_size(design: (f64, f64), frame: (f64, f64), scale: f64) -> (f64, f64) {
+    let fit = (frame.0 / design.0).min(frame.1 / design.1);
+    (
+        design.0 * fit * scale / frame.0,
+        design.1 * fit * scale / frame.1,
+    )
+}
+
 /// The key a media item's art is kept under: the media id for its pictures
 /// and its default stream's waveform, and the id with the stream for the
 /// waveform of another stream a clip plays. Peaks and pending jobs share it.
@@ -976,6 +1094,7 @@ fn kind_of(clip: &Clip) -> ClipKind {
         model::ClipKind::Image => ClipKind::Image,
         model::ClipKind::Text => ClipKind::Text,
         model::ClipKind::Layer => ClipKind::Filter,
+        model::ClipKind::Piece => ClipKind::Piece,
     }
 }
 
@@ -2024,6 +2143,7 @@ impl Studio {
             playhead: 0.0,
             // ~20px a second: a ten-second cut fits a pane at its default width.
             playing: false,
+            stop_at: None,
             transport: slint::Timer::default(),
             hover: None,
             hover_hush: slint::Timer::default(),
@@ -2036,7 +2156,11 @@ impl Studio {
             menu_bar_token: 0,
             menu_target: None,
             menu_media: None,
+            piece_menu: None,
             menu_token: 0,
+            pieces: Vec::new(),
+            piece_art: HashMap::new(),
+            piece_name: None,
             toast: ToastState::default(),
             on_start: true,
             start: crate::panes::start::StartPane::default(),
@@ -2096,6 +2220,7 @@ impl Studio {
         // would leave it on.
         studio.library[1].category = "All".to_owned();
         studio.library[1].group = -1;
+        studio.refresh_pieces();
         studio
     }
 
@@ -2179,6 +2304,11 @@ impl Studio {
             TrackSize::Small => LANE_SMALL,
             TrackSize::Medium => LANE_MEDIUM,
             TrackSize::Large => LANE_LARGE,
+            TrackSize::Custom => self
+                .lanes
+                .lane_view
+                .get(&lane.id)
+                .map_or(LANE_MEDIUM, |view| view.height),
             TrackSize::Auto => {
                 let tallest = self
                     .timeline()
@@ -2189,8 +2319,12 @@ impl Studio {
                         model::ClipKind::Video | model::ClipKind::Image => LANE_LARGE,
                         model::ClipKind::Audio => LANE_MEDIUM,
                         // A title is its name strip alone; a layer has no
-                        // picture at all. Neither needs a body's height.
-                        model::ClipKind::Text | model::ClipKind::Layer => LANE_SMALL,
+                        // picture at all; a piece is sealed, its inside
+                        // shown on the stage and not in the lane. None
+                        // needs a body's height.
+                        model::ClipKind::Text | model::ClipKind::Layer | model::ClipKind::Piece => {
+                            LANE_SMALL
+                        }
                     })
                     .fold(0.0_f32, f32::max);
                 if tallest > 0.0 { tallest } else { LANE_MEDIUM }
@@ -2607,10 +2741,13 @@ impl Studio {
             slint::TimerMode::Repeated,
             std::time::Duration::from_millis(33),
             || {
+                let probe_at = std::time::Instant::now();
                 crate::host::Shell::with(|shell, app| {
                     {
                         let mut studio = shell.studio.borrow_mut();
-                        let end = studio.duration();
+                        let end = studio
+                            .stop_at
+                            .map_or(studio.duration(), |stop| stop.min(studio.duration()));
                         let position = studio.host.playback.position() as f32;
                         studio.playhead = position.min(end);
                         // The view follows: a playhead that runs off the
@@ -2640,12 +2777,14 @@ impl Studio {
                     }
                     shell.studio.borrow().publish_lanes(&app, &shell.models);
                 });
+                crate::probe::add(crate::probe::TICK, probe_at.elapsed());
             },
         );
     }
 
     pub fn pause(&mut self) {
         self.playing = false;
+        self.stop_at = None;
         self.transport.stop();
         self.host.playback.pause();
     }
@@ -3156,6 +3295,21 @@ impl Studio {
     /// What a library payload names - "media:12", "text:default:Title" -
     /// before the timeline has decided where to put it.
     pub fn incoming(&self, payload: &str) -> Option<DropPlan> {
+        // A piece: its bundle folder rides where a file's media id would.
+        // Taken whole before the split below, because a Windows path has a
+        // colon of its own; a piece's name never does (see `piece_named`).
+        if let Some(rest) = payload.strip_prefix("piece:") {
+            let path = rest.rsplit_once(':').map_or(rest, |(path, _)| path);
+            let info = self.pieces.iter().find(|piece| piece.path == path)?;
+            return Some(DropPlan {
+                kind: ClipKind::Piece,
+                label: info.name.clone(),
+                media: info.path.clone(),
+                start: 0.0,
+                duration: (info.duration as f32).max(MIN_DURATION),
+                row: 0,
+            });
+        }
         let mut fields = payload.splitn(3, ':');
         let (sort, id) = (fields.next()?, fields.next()?);
         let label = fields.next().unwrap_or(id);
@@ -3233,6 +3387,10 @@ impl Studio {
         let Some(track_id) = self.row_track(plan.row).map(|track| track.id.clone()) else {
             return;
         };
+        if plan.kind == ClipKind::Piece {
+            self.place_piece(&plan.media, Some(track_id), f64::from(plan.start));
+            return;
+        }
         let created = if plan.kind == ClipKind::Text {
             self.add_title(
                 Some(track_id),
@@ -3268,6 +3426,10 @@ impl Studio {
             return;
         };
         let start = f64::from(self.playhead.max(0.0));
+        if plan.kind == ClipKind::Piece {
+            self.place_piece(&plan.media, None, start);
+            return;
+        }
         let created = if plan.kind == ClipKind::Text {
             self.add_title(None, start, f64::from(plan.duration), &plan.media)
         } else if plan.kind == ClipKind::Filter {
@@ -3496,6 +3658,84 @@ impl Studio {
                 ..ClipPatch::default()
             },
         });
+    }
+
+    /// Picks `id` for one end of the selected clip, or clears that end for
+    /// an empty id, then plays that end in the viewer so the pick is seen
+    /// at once. An end that had a preset keeps its length.
+    pub fn pick_animation(&mut self, slot: AnimationSlot, id: &str) {
+        use crate::panes::animations;
+        let Some(clip_id) = self.sole_selection() else {
+            return;
+        };
+        let Some(clip) = self.clip(&clip_id).cloned() else {
+            return;
+        };
+        let animation = (!id.is_empty()).then(|| ClipAnimation {
+            id: id.to_owned(),
+            duration: animations::starting_length(&clip, slot),
+        });
+        let picked = animation.is_some();
+        self.apply(Command::SetClipAnimation {
+            clip_id: clip_id.clone(),
+            slot,
+            animation,
+        });
+        if picked {
+            self.replay_animation(slot);
+        }
+    }
+
+    /// Sets the length of one end of the selected clip's animation, as one
+    /// move of the slider's gesture, so a drag is one undo step.
+    pub fn set_animation_length(&mut self, slot: AnimationSlot, seconds: f64) {
+        let Some(clip_id) = self.sole_selection() else {
+            return;
+        };
+        let Some(current) = self
+            .clip(&clip_id)
+            .and_then(|clip| crate::panes::animations::current(clip, slot).cloned())
+        else {
+            return;
+        };
+        let gesture = format!("animation-{clip_id}-{slot:?}");
+        self.apply_within(
+            &gesture,
+            Command::SetClipAnimation {
+                clip_id,
+                slot,
+                animation: Some(ClipAnimation {
+                    duration: seconds,
+                    ..current
+                }),
+            },
+        );
+    }
+
+    /// Plays the selected clip's animation on one end in the viewer.
+    pub fn replay_animation(&mut self, slot: AnimationSlot) {
+        use crate::panes::animations;
+        let Some(clip_id) = self.sole_selection() else {
+            return;
+        };
+        let Some(clip) = self.clip(&clip_id).cloned() else {
+            return;
+        };
+        let Some(seconds) = animations::current(&clip, slot).map(|a| a.duration) else {
+            return;
+        };
+        let (from, to) = animations::preview_window(&clip, slot, seconds);
+        self.play_window(from as f32, to as f32);
+    }
+
+    /// Plays `from..to` of the timeline in the viewer and stops at `to`.
+    pub fn play_window(&mut self, from: f32, to: f32) {
+        if self.playing {
+            self.pause();
+        }
+        self.seek(from.max(0.0));
+        self.play_toggle();
+        self.stop_at = Some(to);
     }
 
     /// Sets the selected clip's transition to `seconds`, clamped to what
@@ -4864,6 +5104,21 @@ impl Studio {
                 (longest * glyph + 0.6 * em) * clip.scale / width,
                 (rows * em * text.line_height.max(0.5) + 0.5 * em) * clip.scale / height,
             )
+        } else if clip.kind == model::ClipKind::Piece {
+            // The piece's design frame, fitted inside the output as the
+            // expansion fits it, at the clip's scale.
+            let design = clip
+                .piece
+                .as_ref()
+                .and_then(|placement| self.project().piece(&placement.piece_id))
+                .map(|piece| {
+                    (
+                        f64::from(piece.design_width.max(1)),
+                        f64::from(piece.design_height.max(1)),
+                    )
+                })
+                .unwrap_or((width, height));
+            piece_footprint_size(design, (width, height), clip.scale)
         } else {
             let media = self.project().media_by_id(&clip.media_id);
             let source = media
@@ -4895,7 +5150,7 @@ impl Studio {
         // picture, that is. A title's box is its style's, and the compositor
         // never stretches one; see titles.rs.
         // https://github.com/jub0t/Concat/issues/119
-        let (w, h) = if clip.kind == model::ClipKind::Text {
+        let (w, h) = if matches!(clip.kind, model::ClipKind::Text | model::ClipKind::Piece) {
             (w, h)
         } else {
             (w * clip.stretch_x, h * clip.stretch_y)
@@ -4955,7 +5210,8 @@ impl Studio {
             .iter()
             .map(|clip| clip.as_ref())
             .filter(|clip| {
-                (clip.kind.is_visual() || clip.kind == model::ClipKind::Text)
+                (clip.kind.is_visual()
+                    || matches!(clip.kind, model::ClipKind::Text | model::ClipKind::Piece))
                     && showing.contains(clip.track_id.as_str())
                     && clip.start <= playhead
                     && playhead < clip.start + clip.duration
@@ -5092,6 +5348,10 @@ impl Studio {
             return;
         };
         if self.locked(&clip.track_id) {
+            return;
+        }
+        // A piece scales as a whole; its sides are not grips on it.
+        if clip.kind == model::ClipKind::Piece && (5..=8).contains(&grip) {
             return;
         }
         let footprint = self.footprint(&clip);
@@ -6379,6 +6639,10 @@ impl Studio {
     }
 
     pub fn duplicate(&mut self, source: &Clip) {
+        if source.kind == model::ClipKind::Piece {
+            self.duplicate_piece(source);
+            return;
+        }
         let end = source.start + source.duration;
         if source.kind == model::ClipKind::Text {
             let created = self.apply(Command::AddTextClip {
@@ -6390,6 +6654,7 @@ impl Studio {
                 offset_y: Some(source.offset_y),
             });
             if let Some(id) = created {
+                self.copy_animations(source, &id);
                 self.selection = vec![id];
             }
             return;
@@ -6438,8 +6703,80 @@ impl Studio {
                 ..ClipPatch::default()
             },
         });
+        for (slot, animation) in [
+            (AnimationSlot::In, &source.animation_in),
+            (AnimationSlot::Out, &source.animation_out),
+        ] {
+            if animation.is_some() {
+                commands.push(Command::SetClipAnimation {
+                    clip_id: created.clone(),
+                    slot,
+                    animation: animation.clone(),
+                });
+            }
+        }
         self.apply(Command::Batch { commands });
         self.selection = vec![created];
+    }
+
+    /// A copy of a placed piece after it, on its lane: the same piece,
+    /// placed, sized, turned, stretched and retitled the same.
+    fn duplicate_piece(&mut self, source: &Clip) {
+        let Some(placement) = source.piece.clone() else {
+            return;
+        };
+        let Some(created) = self.apply(Command::PlacePiece {
+            piece_id: placement.piece_id,
+            track_id: Some(source.track_id.clone()),
+            start: source.start + source.duration,
+        }) else {
+            return;
+        };
+        let mut commands = vec![Command::SetClipTransform {
+            clip_id: created.clone(),
+            scale: Some(source.scale),
+            offset_x: Some(source.offset_x),
+            offset_y: Some(source.offset_y),
+            rotation: Some(source.rotation),
+            stretch_x: None,
+            stretch_y: None,
+        }];
+        let saved = self
+            .clip(&created)
+            .map_or(source.duration, |clip| clip.duration);
+        if (source.duration - saved).abs() > 1e-6 {
+            commands.push(Command::TrimClip {
+                clip_id: created.clone(),
+                edge: TrimEdge::End,
+                delta: source.duration - saved,
+                ripple: false,
+            });
+        }
+        for (inner, words) in placement.texts {
+            commands.push(Command::SetPieceText {
+                clip_id: created.clone(),
+                inner_clip_id: inner,
+                text: Some(words),
+            });
+        }
+        self.apply(Command::Batch { commands });
+        self.selection = vec![created];
+    }
+
+    /// Gives `to` the animations `from` has.
+    fn copy_animations(&mut self, from: &Clip, to: &str) {
+        for (slot, animation) in [
+            (AnimationSlot::In, &from.animation_in),
+            (AnimationSlot::Out, &from.animation_out),
+        ] {
+            if animation.is_some() {
+                self.apply(Command::SetClipAnimation {
+                    clip_id: to.to_owned(),
+                    slot,
+                    animation: animation.clone(),
+                });
+            }
+        }
     }
 
     /// What the tray's sound and word tools may do to the selection: one
@@ -7020,6 +7357,206 @@ impl Studio {
         );
     }
 
+    // ── pieces ──
+
+    /// Lists the piece library again and loads any poster not yet held.
+    /// A handful of small files, read on the spot: the shelf is right the
+    /// moment a save or a rename reports back.
+    pub fn refresh_pieces(&mut self) {
+        self.pieces = concat_host::pieces::list(&self.host.dirs.config);
+        for piece in &self.pieces {
+            if piece.has_poster && !self.piece_art.contains_key(&piece.path) {
+                let poster = std::path::Path::new(&piece.path).join("poster.jpg");
+                if let Ok(image) = slint::Image::load_from_path(&poster) {
+                    self.piece_art.insert(piece.path.clone(), image);
+                }
+            }
+        }
+    }
+
+    /// Opens the name sheet to save the selection as a piece, proposing
+    /// the first selected clip's name until the person says otherwise.
+    pub fn save_piece(&mut self) {
+        self.flush_commit();
+        if self.selection.is_empty() {
+            self.notify(&t("mediaPane.noPiecesYetMark"), true);
+            return;
+        }
+        let first = self
+            .selection
+            .first()
+            .and_then(|id| self.clip(id))
+            .map(|clip| clip.name.clone())
+            .unwrap_or_else(|| "Piece".to_owned());
+        let proposed = concat_host::pieces::unique_name(&self.host.dirs.config, &first);
+        self.piece_name = Some((PieceNaming::Save(self.selection.clone()), proposed));
+    }
+
+    /// The name sheet's answer: save or rename, off the event loop.
+    pub fn piece_named(&mut self) {
+        let Some((naming, name)) = self.piece_name.take() else {
+            return;
+        };
+        // A colon would split the shelf's drag payload; see `incoming`.
+        let name = name.trim().replace(':', "-");
+        if name.is_empty() {
+            return;
+        }
+        let config = self.host.dirs.config.clone();
+        match naming {
+            PieceNaming::Save(clip_ids) => {
+                let project = self.project().clone();
+                spawn(
+                    move || concat_host::pieces::save(&config, &project, &clip_ids, &name),
+                    |studio, _, _, result| match result {
+                        Ok(info) => {
+                            studio.notify(&tf("studio.savedPiece", &[&info.name]), false);
+                            studio.refresh_pieces();
+                        }
+                        Err(error) => studio.notify(&error, true),
+                    },
+                );
+            }
+            PieceNaming::Rename(path) => {
+                spawn(
+                    move || concat_host::pieces::rename(&config, &path, &name),
+                    |studio, _, _, result| match result {
+                        Ok(_) => studio.refresh_pieces(),
+                        Err(error) => studio.notify(&error, true),
+                    },
+                );
+            }
+        }
+    }
+
+    /// Loads a library piece into the project - its files copied in off
+    /// the event loop - and places it: on `track_id` at `start`, or on the
+    /// first free lane when there is no lane.
+    pub fn place_piece(&mut self, path: &str, track_id: Option<String>, start: f64) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        let project_dir = session.path().to_owned();
+        let path = path.to_owned();
+        spawn(
+            move || concat_host::pieces::load(&path, &project_dir),
+            move |studio, _, _, result| match result {
+                Ok(selection) => {
+                    if let Some(id) = studio.apply(Command::InsertPiece {
+                        piece: selection.piece,
+                        media: selection.media,
+                        fonts: selection.fonts,
+                        track_id,
+                        start,
+                    }) {
+                        studio.selection = vec![id];
+                    }
+                }
+                Err(error) => studio.notify(&error, true),
+            },
+        );
+    }
+
+    /// The titles inside the one selected piece clip, in lane order, each
+    /// with the words it says now: the placement's, or the saved ones.
+    fn piece_texts(&self) -> Vec<PieceTextData> {
+        let Some(clip) = self.sole_selection().and_then(|id| self.clip(&id).cloned()) else {
+            return Vec::new();
+        };
+        let Some(placement) = clip.piece.as_ref() else {
+            return Vec::new();
+        };
+        let Some(piece) = self.project().piece(&placement.piece_id) else {
+            return Vec::new();
+        };
+        piece
+            .lanes
+            .iter()
+            .flat_map(|lane| lane.clips.iter())
+            .filter(|inner| inner.kind == model::ClipKind::Text)
+            .enumerate()
+            .map(|(index, inner)| PieceTextData {
+                inner: inner.id.as_str().into(),
+                label: tf("configPane.pieceText", &[&(index + 1)]).into(),
+                text: placement
+                    .texts
+                    .get(&inner.id)
+                    .cloned()
+                    .or_else(|| inner.text.as_ref().map(|style| style.content.clone()))
+                    .unwrap_or_default()
+                    .into(),
+            })
+            .collect()
+    }
+
+    /// New words for a title inside the one selected piece clip.
+    pub fn set_piece_text(&mut self, inner: &str, text: &str) {
+        let Some(clip_id) = self.sole_selection() else {
+            return;
+        };
+        self.apply(Command::SetPieceText {
+            clip_id,
+            inner_clip_id: inner.to_owned(),
+            text: Some(text.to_owned()),
+        });
+    }
+
+    /// The right-click menu for a piece card on the shelf.
+    fn piece_card_menu(&self, path: &str) -> Vec<MenuItemData> {
+        let known = self.pieces.iter().any(|piece| piece.path == path);
+        vec![
+            MenuItemData {
+                id: "piece-rename".into(),
+                label: t("studio.renamePiece").into(),
+                kind: MenuRow::Action,
+                enabled: known,
+                ..Default::default()
+            },
+            MenuItemData {
+                id: "piece-delete".into(),
+                label: t("studio.deletePiece").into(),
+                kind: MenuRow::Action,
+                glyph: Glyph::Trash,
+                enabled: known,
+                danger: true,
+                ..Default::default()
+            },
+        ]
+    }
+
+    /// One of a piece card's menu verbs.
+    pub fn piece_action(&mut self, path: &str, action: &str) {
+        match action {
+            "piece-rename" => {
+                let Some(piece) = self.pieces.iter().find(|piece| piece.path == path) else {
+                    return;
+                };
+                self.piece_name = Some((PieceNaming::Rename(path.to_owned()), piece.name.clone()));
+            }
+            "piece-delete" => {
+                let config = self.host.dirs.config.clone();
+                let path = path.to_owned();
+                let name = self
+                    .pieces
+                    .iter()
+                    .find(|piece| piece.path == path)
+                    .map(|piece| piece.name.clone())
+                    .unwrap_or_default();
+                spawn(
+                    move || concat_host::pieces::delete(&config, &path),
+                    move |studio, _, _, result| match result {
+                        Ok(()) => {
+                            studio.notify(&tf("studio.deletedPiece", &[&name]), false);
+                            studio.refresh_pieces();
+                        }
+                        Err(error) => studio.notify(&error, true),
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+
     // ── notices ──
 
     /// Raises the bottom-right notice. Every caller is some other handler
@@ -7173,6 +7710,14 @@ impl Studio {
                             .as_ref()
                             .map(|transition| transition.duration as f32)
                             .unwrap_or(0.0),
+                        animation_in: clip
+                            .animation_in
+                            .as_ref()
+                            .map_or(0.0, |animation| animation.duration as f32),
+                        animation_out: clip
+                            .animation_out
+                            .as_ref()
+                            .map_or(0.0, |animation| animation.duration as f32),
                         fade_in: clip.fade_in as f32,
                         fade_out: clip.fade_out as f32,
                         volume: clip.volume as f32,
@@ -7209,7 +7754,8 @@ impl Studio {
             .clips
             .iter()
             .filter(|clip| {
-                (clip.kind.is_visual() || clip.kind == model::ClipKind::Text)
+                (clip.kind.is_visual()
+                    || matches!(clip.kind, model::ClipKind::Text | model::ClipKind::Piece))
                     && clip.start <= playhead
                     && playhead < clip.start + clip.duration
             })
@@ -8412,6 +8958,28 @@ impl Studio {
                 .as_ref()
                 .map(|transition| transition.duration as f32)
                 .unwrap_or(0.5),
+            animation_in_id: clip
+                .animation_in
+                .as_ref()
+                .map(|animation| animation.id.as_str())
+                .unwrap_or_default()
+                .into(),
+            animation_in_length: clip
+                .animation_in
+                .as_ref()
+                .map_or(0.5, |animation| animation.duration as f32),
+            animation_in_room: crate::panes::animations::room(clip, AnimationSlot::In) as f32,
+            animation_out_id: clip
+                .animation_out
+                .as_ref()
+                .map(|animation| animation.id.as_str())
+                .unwrap_or_default()
+                .into(),
+            animation_out_length: clip
+                .animation_out
+                .as_ref()
+                .map_or(0.5, |animation| animation.duration as f32),
+            animation_out_room: crate::panes::animations::room(clip, AnimationSlot::Out) as f32,
             scale: shown(clip, model::KeyProperty::Scale, at) as f32,
             offset_x: shown(clip, model::KeyProperty::OffsetX, at) as f32,
             offset_y: shown(clip, model::KeyProperty::OffsetY, at) as f32,
@@ -8700,6 +9268,7 @@ impl Studio {
             );
             sync(&models.transition_groups, groups);
             sync(&models.catalogue_transitions, entries);
+            fill_animation_presets(models);
             *self.shelf_stamp.borrow_mut() = Some(stamp);
         }
         sync(
@@ -8834,10 +9403,38 @@ impl Studio {
         editor.set_project_output(format!("{width} × {height}").into());
         editor.set_project_rate(format!("{:.2} fps", self.frame_rate()).into());
         editor.set_project_duration(frames_timecode(self.duration(), self.frame_rate()).into());
-        editor.set_count_media(self.project().media.len() as i32);
+        editor.set_count_media(
+            self.project()
+                .media
+                .iter()
+                .filter(|item| !item.piece_media)
+                .count() as i32,
+        );
         editor.set_count_tracks(self.timeline().tracks.len() as i32);
         editor.set_count_clips(self.timeline().clips.len() as i32);
         app.set_project_sheet(self.project_sheet.data(self));
+        app.set_piece_name(PieceNameData {
+            open: self.piece_name.is_some(),
+            name: self
+                .piece_name
+                .as_ref()
+                .map(|(_, name)| name.as_str())
+                .unwrap_or_default()
+                .into(),
+        });
+        sync(
+            &models.pieces,
+            self.pieces
+                .iter()
+                .map(|piece| CatalogueEntryData {
+                    id: piece.path.as_str().into(),
+                    name: piece.name.as_str().into(),
+                    art: self.piece_art.get(&piece.path).cloned().unwrap_or_default(),
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        sync(&models.piece_texts, self.piece_texts());
 
         let rows = self.menu();
         editor.set_menu_height(Self::menu_height(&rows));
@@ -8928,6 +9525,9 @@ impl Studio {
     /// The right-click menu: the bin card's when it was opened on one,
     /// else the clip's.
     fn menu(&self) -> Vec<MenuItemData> {
+        if let Some(path) = self.piece_menu.as_deref() {
+            return self.piece_card_menu(path);
+        }
         if let Some(id) = self.menu_media.as_deref() {
             return self.media_menu(id);
         }
@@ -8988,7 +9588,7 @@ impl Studio {
                 t("studio.splitAtPlayhead"),
                 Glyph::Split,
                 "S",
-                straddled && !locked,
+                straddled && !locked && clip.kind != model::ClipKind::Piece,
             ),
             action(
                 "freeze",
@@ -9012,7 +9612,18 @@ impl Studio {
                     && self.enhance_jobs.is_empty(),
             ),
             rule(),
+            action("save-piece", t("studio.saveAsPiece"), Glyph::Plus, "", true),
         ];
+        if clip.kind == model::ClipKind::Piece {
+            rows.push(action(
+                "unpack",
+                t("studio.unpackPiece"),
+                Glyph::Split,
+                "",
+                !locked,
+            ));
+        }
+        rows.push(rule());
         // One slot, two verbs: the sound is either on its picture or off it.
         // Shown on every video clip, so the verb is where a person looks for
         // it, and greyed rather than gone when the file has no sound.
@@ -9436,6 +10047,19 @@ impl Studio {
         }
     }
 
+    /// A lane's foot dragged: any height between the smallest size and the
+    /// tallest a lane goes, kept as the lane's own until a size is picked.
+    pub fn set_lane_height(&mut self, row: i32, height: f32) {
+        if !height.is_finite() {
+            return;
+        }
+        if let Some(id) = self.row_track(row).map(|track| track.id.clone()) {
+            let view = self.lanes.lane_view.entry(id).or_default();
+            view.size = TrackSize::Custom;
+            view.height = height.clamp(LANE_SMALL, LANE_TALLEST);
+        }
+    }
+
     /// A quarter turn clockwise on every selected picture, at the playhead:
     /// a keyed rotation gets a key there and a constant one turns whole, as
     /// the stage's own rotate grip writes it. One undo step for the lot.
@@ -9635,6 +10259,17 @@ impl Studio {
             }
             "freeze" => self.freeze_at_playhead(),
             "enhance" => self.enhance_clip(id),
+            "save-piece" => {
+                if !self.selection.iter().any(|held| held == id) {
+                    self.selection = vec![id.to_owned()];
+                }
+                self.save_piece();
+            }
+            "unpack" => {
+                self.apply(Command::UnpackPiece {
+                    clip_id: id.to_owned(),
+                });
+            }
             "export-audio" => self.export_clip_audio(id),
             "detach" => {
                 self.apply(Command::DetachAudio {
@@ -9711,6 +10346,15 @@ impl Studio {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_wide_piece_is_boxed_to_the_width_of_a_tall_frame() {
+        let (w, h) = super::piece_footprint_size((1920.0, 1080.0), (1080.0, 1920.0), 1.0);
+        assert!((w - 1.0).abs() < 1e-9, "{w}");
+        assert!((h - 607.5 / 1920.0).abs() < 1e-9, "{h}");
+        let (w, _) = super::piece_footprint_size((1920.0, 1080.0), (1080.0, 1920.0), 0.5);
+        assert!((w - 0.5).abs() < 1e-9, "scale shrinks the box");
+    }
+
     use super::{
         Command, Footprint, SPAN_EDGE, Studio, adjust_key_names, chain_colours, chain_rows,
         custom_frame, custom_rate, fps_of, grading_rows, home_folder, key_commands, link_key_names,

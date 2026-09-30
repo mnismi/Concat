@@ -113,6 +113,8 @@ impl Titles {
     }
 
     fn clips_with(&self, project: &Project, width: u32, height: u32, live: bool) -> Vec<TitleClip> {
+        let expanded = concat_project::pieces::expand_pieces(project, None);
+        let project: &Project = &expanded;
         let timeline = project.active();
         let mut out = Vec::new();
         for clip in &timeline.clips {
@@ -142,6 +144,7 @@ impl Titles {
                     continue;
                 }
             };
+            let (entrance, exit) = concat_export::flatten::export_animations(clip);
             out.push(TitleClip {
                 clip_id: clip.id.clone(),
                 clip: ExportClip {
@@ -150,10 +153,20 @@ impl Titles {
                     muted: true,
                     volume: 0.0,
                     animation: concat_export::flatten::export_keys(clip),
+                    entrance,
+                    exit,
                     flip_h: clip.flip_h,
                     flip_v: clip.flip_v,
                     blend: clip.blend.clone(),
-                    effects: clip.video_effects.clone(),
+                    effects: {
+                        let mut chain = clip.video_effects.clone();
+                        chain.extend(concat_export::animations::animation_effects(
+                            clip,
+                            0.0,
+                            Some(1.0),
+                        ));
+                        chain
+                    },
                     scale: clip.scale,
                     offset_x: clip.offset_x,
                     offset_y: clip.offset_y,
@@ -637,5 +650,39 @@ mod tests {
             left[0].clip.reveal_map.as_ref().map(|r| &*r.gray)
         );
         let _ = std::fs::remove_dir_all(dirs.data.parent().unwrap());
+    }
+
+    #[test]
+    fn a_title_inside_a_piece_is_painted_with_the_placement_s_words() {
+        use concat_project::model::{
+            Clip, ClipKind as Kind, Piece, PieceLane, PiecePlacement, TextStyle,
+        };
+        let dirs = scratch();
+        let mut project = concat_project::Project::new();
+        let mut words = Clip::blank("t", "", Kind::Text, "Hi", 0.0, 2.0);
+        words.text = Some(TextStyle {
+            content: "Hi".to_owned(),
+            ..TextStyle::default()
+        });
+        project.pieces.push(Piece {
+            id: "p1".to_owned(),
+            duration: 2.0,
+            lanes: vec![PieceLane {
+                clips: vec![words],
+                ..PieceLane::default()
+            }],
+            ..Piece::default()
+        });
+        let mut placed = Clip::blank("c2", "T1", Kind::Piece, "p", 3.0, 2.0);
+        placed.piece = Some(PiecePlacement {
+            piece_id: "p1".to_owned(),
+            texts: [("t".to_owned(), "Hello".to_owned())].into(),
+        });
+        project.active_mut().clips.push(std::sync::Arc::new(placed));
+
+        let out = Titles::new(&dirs).clips(&project, 640, 360);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].clip_id, "c2/t");
+        assert_eq!(out[0].clip.start, 3.0);
     }
 }

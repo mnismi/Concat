@@ -18,7 +18,7 @@ use std::path::Path;
 use concat_project::model::{ClipKind as ModelClipKind, KeyProperty, Project, Timeline};
 
 use crate::chains::audio_filter_chain;
-use crate::{ClipKind, ExportClip, ExportKey, TransitionSpec};
+use crate::{ClipKind, ExportAnimation, ExportClip, ExportKey, TransitionSpec};
 
 /// Flattens one timeline of `project` for the exporter - the active one
 /// when `timeline_id` is `None`. Text clips are excluded (they rasterise
@@ -36,6 +36,9 @@ pub fn flatten_timeline_in(
     timeline_id: Option<&str>,
     project_dir: Option<&Path>,
 ) -> Vec<ExportClip> {
+    // Pieces play as the clips inside them; nothing below knows they exist.
+    let expanded = concat_project::pieces::expand_pieces(project, timeline_id);
+    let project: &Project = &expanded;
     let Some(timeline) = pick_timeline(project, timeline_id) else {
         return Vec::new();
     };
@@ -77,8 +80,9 @@ pub fn flatten_timeline_in(
                 ModelClipKind::Image => ClipKind::Image,
                 // Handled above; unreachable spelled as a skip so a new
                 // kind fails soft.
-                ModelClipKind::Text | ModelClipKind::Layer => return None,
+                ModelClipKind::Text | ModelClipKind::Layer | ModelClipKind::Piece => return None,
             };
+            let (entrance, exit) = export_animations(clip);
             Some(ExportClip {
                 path: media.path.clone(),
                 audio_stream: clip.audio_stream,
@@ -100,6 +104,8 @@ pub fn flatten_timeline_in(
                     .map(|point| (point.at, point.speed))
                     .collect(),
                 animation: export_keys(clip),
+                entrance,
+                exit,
                 flip_h: clip.flip_h,
                 flip_v: clip.flip_v,
                 blend: clip.blend.clone(),
@@ -107,7 +113,20 @@ pub fn flatten_timeline_in(
                     .crop
                     .filter(|crop| !crop.is_none())
                     .map(|crop| [crop.left, crop.top, crop.right, crop.bottom]),
-                effects: clip.video_effects.clone(),
+                effects: {
+                    let speed = match clip.kind {
+                        ModelClipKind::Image => Some(1.0),
+                        _ if clip.speed_curve.is_some() => None,
+                        _ => Some(clip.speed),
+                    };
+                    let mut chain = clip.video_effects.clone();
+                    chain.extend(crate::animations::animation_effects(
+                        clip,
+                        clip.source_start,
+                        speed,
+                    ));
+                    chain
+                },
                 scale: export_base(clip, KeyProperty::Scale),
                 offset_x: export_base(clip, KeyProperty::OffsetX),
                 offset_y: export_base(clip, KeyProperty::OffsetY),
@@ -191,6 +210,28 @@ pub fn export_keys(clip: &concat_project::model::Clip) -> Vec<ExportKey> {
         }));
     }
     out
+}
+
+/// The clip's In and Out as the engine plays them: the In held to the
+/// clip, the Out to what the In leaves, and a length that is not a
+/// positive number read as no animation - a hand-edited file degrades to
+/// a clip that stands still.
+pub fn export_animations(
+    clip: &concat_project::model::Clip,
+) -> (Option<ExportAnimation>, Option<ExportAnimation>) {
+    let fit = |animation: &Option<concat_project::model::ClipAnimation>, room: f64| {
+        animation
+            .as_ref()
+            .filter(|animation| animation.duration.is_finite() && animation.duration > 0.0)
+            .map(|animation| ExportAnimation {
+                id: animation.id.clone(),
+                seconds: animation.duration.min(room.max(0.0)),
+            })
+    };
+    let entrance = fit(&clip.animation_in, clip.duration);
+    let taken = entrance.as_ref().map_or(0.0, |animation| animation.seconds);
+    let exit = fit(&clip.animation_out, clip.duration - taken);
+    (entrance, exit)
 }
 
 /// The clip's gain over its length, as `(fraction, gain)` pairs, or empty
@@ -336,5 +377,81 @@ mod tests {
         // by asking for a timeline that does not exist.
         assert!(flatten_timeline(editor.project(), None).is_empty());
         assert!(flatten_timeline(editor.project(), Some("nope")).len() <= 1);
+    }
+
+    #[test]
+    fn the_flattener_holds_the_windows_inside_the_clip() {
+        use concat_project::model::{Clip, ClipAnimation, ClipKind};
+        let mut clip = Clip::blank("c1", "t1", ClipKind::Video, "clip", 0.0, 2.0);
+        clip.animation_in = Some(ClipAnimation {
+            id: "zoom-in".to_owned(),
+            duration: 1.5,
+        });
+        clip.animation_out = Some(ClipAnimation {
+            id: "zoom-out".to_owned(),
+            duration: 1.5,
+        });
+        let (entrance, exit) = export_animations(&clip);
+        assert_eq!(entrance.expect("in").seconds, 1.5);
+        assert_eq!(exit.expect("out").seconds, 0.5);
+    }
+
+    #[test]
+    fn a_length_that_is_not_a_positive_number_plays_nothing() {
+        use concat_project::model::{Clip, ClipAnimation, ClipKind};
+        let mut clip = Clip::blank("c1", "t1", ClipKind::Video, "clip", 0.0, 2.0);
+        clip.animation_in = Some(ClipAnimation {
+            id: "zoom-in".to_owned(),
+            duration: f64::NAN,
+        });
+        clip.animation_out = Some(ClipAnimation {
+            id: "zoom-out".to_owned(),
+            duration: -1.0,
+        });
+        assert_eq!(export_animations(&clip), (None, None));
+    }
+
+    #[test]
+    fn a_piece_flattens_to_the_clips_inside_it() {
+        use std::sync::Arc;
+
+        use concat_project::model::{
+            ClipKind as Kind, MediaItem, MediaKind, Piece, PieceLane, PiecePlacement,
+        };
+        let mut project = Project::new();
+        project.media.push(MediaItem {
+            id: "m1".to_owned(),
+            path: "/hand.png".to_owned(),
+            kind: MediaKind::Image,
+            width: Some(400),
+            height: Some(400),
+            piece_media: true,
+            ..MediaItem::default()
+        });
+        let mut hand = concat_project::model::Clip::blank("h", "", Kind::Image, "hand", 0.5, 2.0);
+        hand.media_id = "m1".to_owned();
+        project.pieces.push(Piece {
+            id: "p1".to_owned(),
+            duration: 2.5,
+            lanes: vec![PieceLane {
+                clips: vec![hand],
+                ..PieceLane::default()
+            }],
+            ..Piece::default()
+        });
+        let mut placed =
+            concat_project::model::Clip::blank("c2", "T1", Kind::Piece, "p", 10.0, 2.5);
+        placed.piece = Some(PiecePlacement {
+            piece_id: "p1".to_owned(),
+            texts: Default::default(),
+        });
+        placed.offset_x = 0.25;
+        project.active_mut().clips.push(Arc::new(placed));
+
+        let clips = flatten_timeline(&project, None);
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].path, "/hand.png");
+        assert!((clips[0].start - 10.5).abs() < 1e-9);
+        assert!((clips[0].offset_x - 0.25).abs() < 1e-9);
     }
 }

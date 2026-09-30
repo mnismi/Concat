@@ -62,6 +62,10 @@ pub enum ClipKind {
     /// lives in [`Clip::video_effects`], its strength in [`Clip::opacity`]
     /// and its ramps in the fades.
     Layer,
+    /// A placed piece: a sealed mini-edit from [`Project::pieces`], named
+    /// by [`Clip::piece`]. No media; what it shows is its inner clips,
+    /// placed by this clip's transform and stretched to its length.
+    Piece,
 }
 
 impl ClipKind {
@@ -163,6 +167,11 @@ pub struct MediaItem {
     /// false, so documents without templates stay byte-identical.
     #[serde(default, skip_serializing_if = "is_false")]
     pub placeholder: bool,
+    /// True when the item came in with a piece rather than as an import.
+    /// The bin does not show it. Skipped when false, so documents without
+    /// pieces stay byte-identical.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub piece_media: bool,
     /// The levels the picture is read as, over the file's own tag; see
     /// [`ColorRange`]. Absent, and left out of the document, for the tag.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -845,6 +854,26 @@ pub struct Transition {
     pub duration: f64,
 }
 
+/// A preset played over one end of a clip: its In over the first seconds,
+/// its Out over the last. What each id draws is `concat_core::motion`'s;
+/// an id this build does not know is kept, and drawn as no animation.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipAnimation {
+    /// Which preset, e.g. "zoom-in". Stable forever: project files store it.
+    pub id: String,
+    /// Seconds of timeline it covers, from the end of the clip it sits on.
+    #[serde(default = "half")]
+    pub duration: f64,
+}
+
+/// The shortest animation a command keeps, in seconds: three frames at
+/// thirty, about the least that still reads as movement.
+pub const MIN_ANIMATION: f64 = 0.1;
+
+fn half() -> f64 {
+    0.5
+}
 /// How a title's lines sit within their block, and which point of the block
 /// the clip's position pins: a centred title is placed by its middle, a
 /// left-aligned one by its block's left edge and a right-aligned one by its
@@ -1236,10 +1265,23 @@ pub struct Clip {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "wire::maybe")]
     pub transition_in: Option<Transition>,
+    /// The animation over the clip's first seconds, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "wire::maybe")]
+    pub animation_in: Option<ClipAnimation>,
+    /// The animation over its last seconds, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "wire::maybe")]
+    pub animation_out: Option<ClipAnimation>,
     /// The overlay, when this is a text clip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "wire::maybe")]
     pub text: Option<TextStyle>,
+    /// What a `Piece` clip places, and the words its titles now say. None
+    /// on every other kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "wire::maybe")]
+    pub piece: Option<PiecePlacement>,
     /// Fields this build does not know, kept so a document written by a
     /// newer or a different build round-trips through this one intact.
     #[serde(flatten, default, skip_serializing_if = "Map::is_empty")]
@@ -1278,6 +1320,37 @@ fn rewindow(
     out
 }
 
+impl Clip {
+    /// Whether this clip has a picture to move: a video, a still or a
+    /// title. A sound has nothing to show and a layer is a treatment of
+    /// what is beneath it, so neither takes an In or an Out.
+    pub fn can_animate(&self) -> bool {
+        matches!(
+            self.kind,
+            ClipKind::Video | ClipKind::Image | ClipKind::Text
+        )
+    }
+
+    /// Holds both animations inside the clip: when the two together
+    /// outlast it they shrink in proportion, so a trimmed clip keeps both
+    /// ends' character rather than losing one. What every edit that
+    /// shortens a clip runs.
+    pub fn fit_animations(&mut self) {
+        let length = self.duration;
+        let taken = self.animation_in.as_ref().map_or(0.0, |a| a.duration)
+            + self.animation_out.as_ref().map_or(0.0, |a| a.duration);
+        if taken <= length || taken <= 0.0 {
+            return;
+        }
+        let scale = length / taken;
+        for animation in [&mut self.animation_in, &mut self.animation_out]
+            .into_iter()
+            .flatten()
+        {
+            animation.duration *= scale;
+        }
+    }
+}
 impl Default for Clip {
     /// What a document entry starts from before its own fields land on
     /// it: [`Clip::blank`] with no id, on no track, one second of video.
@@ -1333,7 +1406,10 @@ impl Clip {
             muted: None,
             detached_from: None,
             transition_in: None,
+            animation_in: None,
+            animation_out: None,
             text: None,
+            piece: None,
             extra: Map::new(),
         }
     }
@@ -1891,6 +1967,82 @@ pub struct CustomFont {
     pub path: String,
 }
 
+/// The still middle of a piece, in piece seconds: the stretch that grows
+/// when a placement is dragged longer. See [`Piece::hold`].
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hold {
+    /// Where the last entrance has finished.
+    pub from: f64,
+    /// Where the first exit begins.
+    pub to: f64,
+}
+
+/// One inner lane of a piece.
+#[derive(Clone, Default, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PieceLane {
+    /// Ordinary clips; `start` is piece seconds and `track_id` is empty.
+    #[serde(deserialize_with = "wire::list")]
+    pub clips: Vec<Clip>,
+    /// Fields this build does not know, kept so they round-trip.
+    #[serde(flatten, default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
+}
+
+/// A sealed mini-edit, stored once per project however often it is placed.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Piece {
+    /// Minted by the editor ("p1", ...).
+    pub id: String,
+    /// What the shelf and the lane call it.
+    pub name: String,
+    /// The frame it was made in. A placement fits it inside the timeline's.
+    pub design_width: u32,
+    /// The height half of `design_width`'s pair.
+    pub design_height: u32,
+    /// Its length as saved, in seconds.
+    pub duration: f64,
+    /// The still middle that stretches. None is a fixed-length piece.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "wire::maybe")]
+    pub hold: Option<Hold>,
+    /// Inner lanes, top to bottom.
+    #[serde(deserialize_with = "wire::list")]
+    pub lanes: Vec<PieceLane>,
+    /// Fields this build does not know, kept so they round-trip.
+    #[serde(flatten, default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
+}
+
+impl Default for Piece {
+    fn default() -> Self {
+        Piece {
+            id: String::new(),
+            name: String::new(),
+            design_width: 1920,
+            design_height: 1080,
+            duration: 1.0,
+            hold: None,
+            lanes: Vec::new(),
+            extra: Map::new(),
+        }
+    }
+}
+
+/// What a `Piece` clip places and the words it changed.
+#[derive(Clone, Default, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PiecePlacement {
+    /// The [`Piece::id`] placed.
+    pub piece_id: String,
+    /// New words for inner titles, by inner clip id. A title with no entry
+    /// says what it was saved saying.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub texts: BTreeMap<String, String>,
+}
+
 /// The edit: everything the document stores except the app-level settings
 /// (name, output format) that the host manages around it.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -1902,6 +2054,10 @@ pub struct Project {
     /// Fonts the user added from disk, available to every title.
     #[serde(default, deserialize_with = "wire::list")]
     pub fonts: Vec<CustomFont>,
+    /// Every piece placed on any timeline, once each. See [`crate::pieces`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(deserialize_with = "wire::list")]
+    pub pieces: Vec<Piece>,
     /// Every timeline, in tab order. Always at least one. Behind `Arc` for
     /// the reason [`Timeline::clips`] is: a command on one timeline leaves
     /// the others shared with the undo snapshot.
@@ -1940,6 +2096,7 @@ impl Project {
         Self {
             media: Vec::new(),
             fonts: Vec::new(),
+            pieces: Vec::new(),
             extra: Map::new(),
             timelines: vec![Arc::new(Timeline {
                 id: "TL1".to_owned(),
@@ -1977,6 +2134,11 @@ impl Project {
             .position(|timeline| timeline.id == self.active_timeline_id)
             .unwrap_or(0);
         Arc::make_mut(&mut self.timelines[index])
+    }
+
+    /// The piece with this id, or None.
+    pub fn piece(&self, piece_id: &str) -> Option<&Piece> {
+        self.pieces.iter().find(|piece| piece.id == piece_id)
     }
 
     /// The bin entry with this id, or None if it was removed.

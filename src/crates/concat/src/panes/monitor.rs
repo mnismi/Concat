@@ -33,7 +33,7 @@ pub enum MonitorMsg {
     /// The frame at the playhead is wanted.
     Request,
     /// The worker is done: a frame, or why not.
-    Frame(Result<Picture, String>, FrameSpec),
+    Frame(Result<Picture, String>, FrameSpec, std::time::Instant),
     /// The quality picker: 0 full, 1 half, 2 quarter.
     QualityChanged(i32),
     /// A project opened: the monitor starts clean and may complain again.
@@ -51,7 +51,7 @@ impl std::fmt::Debug for MonitorMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Request => write!(f, "Request"),
-            Self::Frame(result, spec) => write!(
+            Self::Frame(result, spec, _) => write!(
                 f,
                 "Frame({}, {spec:?})",
                 match result {
@@ -140,8 +140,10 @@ impl MonitorPane {
     pub fn update(&mut self, msg: MonitorMsg, studio: &mut Studio) {
         match msg {
             MonitorMsg::Request => self.request(studio),
-            MonitorMsg::Frame(result, spec) => {
+            MonitorMsg::Frame(result, spec, asked) => {
                 self.busy = false;
+                crate::probe::add(crate::probe::LATENCY, asked.elapsed());
+                let probe_at = std::time::Instant::now();
                 // A Scopes pane on screen has the frame counted as it is
                 // drawn.
                 let scope = studio
@@ -170,6 +172,7 @@ impl MonitorPane {
                     }
                     Err(error) => Err(error),
                 };
+                crate::probe::add(crate::probe::DRAW, probe_at.elapsed());
                 match picture {
                     Ok(image) => self.image = image,
                     Err(error) => {
@@ -232,9 +235,13 @@ impl MonitorPane {
             return;
         }
         if self.busy {
+            if self.wanted {
+                crate::probe::add(crate::probe::WANTED, std::time::Duration::ZERO);
+            }
             self.wanted = true;
             return;
         }
+        let asked = std::time::Instant::now();
         let (width, height) =
             Self::frame_size(self.quality_of(studio.project()), studio.output_size());
         let Some((clips, settings)) = studio.preview_clips() else {
@@ -254,6 +261,7 @@ impl MonitorPane {
             move || {
                 // On the window's device the frame stays a texture; without
                 // one it comes back as pixels and is uploaded here.
+                let probe_at = std::time::Instant::now();
                 let frame = if monitor.has_gpu() {
                     monitor
                         .frame_sources(Arc::clone(&clips), &settings, spec)
@@ -263,6 +271,7 @@ impl MonitorPane {
                         .frame(Arc::clone(&clips), &settings, spec)
                         .map(|bytes| Picture::Pixels(bytes, width, height))
                 };
+                let gathered = probe_at.elapsed();
                 // Decode-ahead for whatever comes next, on a worker of its
                 // own, so the frame goes to the window without waiting for
                 // it and the next frame can start meanwhile.
@@ -271,10 +280,11 @@ impl MonitorPane {
                     let settings = settings.clone();
                     spawn_detached(move || monitor.prefetch(clips, &settings, spec, 2));
                 }
-                frame
+                (frame, gathered)
             },
-            move |studio, _, _, result| {
-                studio.handle(Msg::Monitor(MonitorMsg::Frame(result, spec)));
+            move |studio, _, _, (result, gathered)| {
+                crate::probe::add(crate::probe::SOURCES, gathered);
+                studio.handle(Msg::Monitor(MonitorMsg::Frame(result, spec, asked)));
             },
         );
     }

@@ -1,0 +1,23 @@
+format = 2
+
+[effect]
+id = "concat.glitch"
+name = "Glitch"
+version = 1
+kind = "effect"
+category = "Distort"
+order = 55
+intensity = "amount"
+description = "Slices of the picture torn sideways and its colours pulled apart, like a broken digital signal."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 60
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

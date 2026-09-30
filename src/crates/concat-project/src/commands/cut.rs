@@ -192,9 +192,13 @@ fn keep_the_ends(project: &mut Project, whole: &Clip, kept: &[String]) {
     if let Some(clip) = timeline.clip_mut(&first) {
         clip.fade_in = whole.fade_in.min(clip.duration);
         clip.transition_in = whole.transition_in.clone();
+        clip.animation_in = whole.animation_in.clone();
+        clip.fit_animations();
     }
     if let Some(clip) = timeline.clip_mut(&last) {
         clip.fade_out = whole.fade_out.min(clip.duration);
+        clip.animation_out = whole.animation_out.clone();
+        clip.fit_animations();
     }
 }
 

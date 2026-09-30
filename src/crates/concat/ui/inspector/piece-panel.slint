@@ -1,0 +1,159 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme/theme.slint";
+import { Section, SectionBody, SectionHeader } from "../primitives/panel.slint";
+import { Param, ParamFormat } from "controls.slint";
+import { ClipField, SelectedClipData } from "../timeline/model.slint";
+
+// The Piece tab.
+//
+// A placed piece is sealed: what is inside it was decided when it was saved.
+// What a person may change is where it sits, how it turns and how big it is -
+// the whole piece at once, its motion along with it - and the words of each
+// title inside. Everything else is Unpack's job, from the clip's menu.
+
+/// One title inside the selected piece.
+export struct PieceTextData {
+    /// The title's id inside the piece: what the edit names.
+    inner: string,
+    /// What the box is called: "Text 1", "Text 2"...
+    label: string,
+    /// The words it says now.
+    text: string,
+}
+
+export component PiecePanel inherits VerticalLayout {
+    in property <SelectedClipData> selected;
+    in property <[PieceTextData]> texts;
+
+    callback set(field: ClipField, value: float);
+    callback commit();
+    /// A title's words, sent once, when its box is left.
+    callback text-set(inner: string, text: string);
+
+    // Seeded, not bound, for the reason every inspector panel's are: a
+    // control writes to its own `value`, and an assignment replaces the
+    // binding declared here.
+    property <float> scale;
+    property <float> offset-x;
+    property <float> offset-y;
+    property <float> rotation;
+
+    function seed() {
+        root.scale = root.selected.scale;
+        root.offset-x = root.selected.offset-x;
+        root.offset-y = root.selected.offset-y;
+        root.rotation = root.selected.rotation;
+    }
+
+    init => { root.seed(); }
+    changed selected => { root.seed(); }
+
+    Section {
+        first: true;
+        placement := SectionHeader {
+            title: I18n.t("configPane.piece");
+            collapsible: true;
+            summary: "\{Math.round(root.scale * 100)}% · \{Math.round(root.rotation)}°";
+        }
+
+        if placement.open: SectionBody {
+            Param {
+                label: I18n.t("common.scale");
+                value <=> root.scale;
+                minimum: 0.05;
+                maximum: 8;
+                step: 0.01;
+                default-value: 1;
+                fmt: ParamFormat.fraction;
+                unit: "%";
+                unit-scale: 100;
+                changed(v) => { root.set(ClipField.scale, v); root.commit(); }
+            }
+
+            Param {
+                label: I18n.t("common.positionX");
+                value <=> root.offset-x;
+                minimum: -1;
+                maximum: 1;
+                step: 0.005;
+                default-value: 0;
+                fmt: ParamFormat.centred;
+                unit: "%";
+                unit-scale: 100;
+                changed(v) => { root.set(ClipField.offset-x, v); root.commit(); }
+            }
+
+            Param {
+                label: I18n.t("common.positionY");
+                value <=> root.offset-y;
+                minimum: -1;
+                maximum: 1;
+                step: 0.005;
+                default-value: 0;
+                fmt: ParamFormat.centred;
+                unit: "%";
+                unit-scale: 100;
+                changed(v) => { root.set(ClipField.offset-y, v); root.commit(); }
+            }
+
+            Param {
+                label: I18n.t("common.rotation");
+                value <=> root.rotation;
+                minimum: -180;
+                maximum: 180;
+                step: 1;
+                default-value: 0;
+                fmt: ParamFormat.degrees;
+                unit: "°";
+                changed(v) => { root.set(ClipField.rotation, v); root.commit(); }
+            }
+        }
+    }
+
+    for entry in root.texts: Section {
+        words := SectionHeader {
+            title: entry.label;
+            collapsible: true;
+            summary: entry.text;
+        }
+
+        if words.open: SectionBody {
+            padding-left: Theme.pad;
+            padding-right: Theme.pad;
+            padding-bottom: 4px;
+
+            Rectangle {
+                height: 64px;
+                border-radius: Theme.r;
+                background: Theme.field;
+                border-width: 1px;
+                border-color: body.has-focus ? Theme.accent : Theme.line;
+                clip: true;
+
+                body := TextInput {
+                    x: 8px;
+                    y: 6px;
+                    width: parent.width - 16px;
+                    height: parent.height - 12px;
+                    text: entry.text;
+                    color: Theme.fg;
+                    font-size: Theme.fs;
+                    single-line: false;
+                    wrap: word-wrap;
+                    selection-background-color: Theme.accent;
+                    selection-foreground-color: Theme.on-accent;
+
+                    // One edit per visit to the box, not one per keystroke.
+                    changed has-focus => {
+                        if (!self.has-focus && self.text != entry.text) {
+                            root.text-set(entry.inner, self.text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

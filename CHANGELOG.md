@@ -15,6 +15,16 @@ releases page only: https://github.com/jub0t/Concat/releases
   pauses below a level you set are cut out and the gaps closed, in one
   undo step.
 
+### Clips
+
+- Animations: a video, a still or a title can come in and go out with a
+  preset: fade, zoom, slide, spin, pop, shake, and effect presets that
+  glitch, blur, pixelate, split the colours, flash or zoom-blur over the
+  first or last seconds. Pick one on the clip's new Animations tab, set
+  its length, and the viewer plays it at once. A bar along each end of a
+  clip on the timeline shows how long it animates. A new Glitch effect
+  joins the Effects shelf.
+
 ## 0.2.5 — 2026-09-28
 
 The release where the picture pipeline moves onto the GPU end to end.

@@ -13,7 +13,7 @@
 /// and a filter has no file either — it is a preset dragged from the library's
 /// Filters page that covers a span of time and treats whatever plays under it,
 /// the way a filter bar does in the consumer editors.
-export enum ClipKind { video, audio, image, text, filter }
+export enum ClipKind { video, audio, image, text, filter, piece }
 
 /// What a press on a clip means. One tool since the razor went - a cut
 /// is made at the playhead, by B or the tray - and the type stays for the
@@ -39,8 +39,9 @@ export struct TimelineTabData {
 /// timeline gets by typing its tracks — arrived at here without typing them,
 /// which matters because these lanes are deliberately untyped and a mixed one
 /// still has to be right. The other three are the override, per lane, from
-/// the dropdown in its header.
-export enum TrackSize { auto, small, medium, large }
+/// the dropdown in its header, and `custom` is a height dragged by hand off
+/// the header's foot.
+export enum TrackSize { auto, small, medium, large, custom }
 
 /// One lane. Deliberately untyped: any media goes on any track, which is why
 /// every lane carries both a visibility and a mute switch rather than one or
@@ -121,6 +122,10 @@ export struct ClipData {
     /// marker at the clip's head is sized to this, in step with what the
     /// cut actually rides.
     transition-duration: float,
+    /// Seconds of In and Out animation at the clip's ends; zero for none.
+    /// Drawn as a bar along the top of each end.
+    animation-in: float,
+    animation-out: float,
     /// seconds of audio ramp at each end; zero for none
     fade-in: float,
     fade-out: float,
@@ -293,6 +298,14 @@ export struct SelectedClipData {
     transition-id: string,
     transition-name: string,
     transition-duration: float,
+    // the animations at either end; an empty id means none. A length is
+    // the slider's value, and a room its ceiling: the clip less the other end.
+    animation-in-id: string,
+    animation-in-length: float,
+    animation-in-room: float,
+    animation-out-id: string,
+    animation-out-length: float,
+    animation-out-room: float,
 
     // transform — video and stills
     scale: float,
